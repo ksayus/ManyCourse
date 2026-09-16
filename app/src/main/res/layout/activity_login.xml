@@ -1,0 +1,376 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  登录页 · 液态玻璃风格（全屏 + 矢量图标版）
+  ─ 表单字段顺序：学校（下拉） → 用户名 → 密码 → 登录按钮
+  ─ 学校下拉的选项由 gr_api/SchoolRegistry 提供，MainActivity 只负责装配，
+    加一所学校不需要动这个 XML
+  ─ 全屏说明：根布局不再 fitsSystemWindows，背景铺满整个屏幕；
+    状态栏/导航栏/键盘避让由 MainActivity 的 WindowInsets 监听完成
+  ─ 布局：图标/标题/提示/卡片构成一条垂直链，bias=0 顶部对齐，
+    卡片底部始终保留 24dp 留白（不再贴住导航栏）；内容超过一屏时（小屏/横屏/键盘弹出）
+    自动转为可滚动，不会被裁切
+  ─ 颜色全部走 @color/login_* 令牌，values-night 覆盖，夜间模式与主界面一致
+-->
+<androidx.core.widget.NestedScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@drawable/bg_login_gradient"
+    android:clipToPadding="false"
+    android:fillViewport="true"
+    android:overScrollMode="never"
+    android:scrollbars="none">
+
+    <androidx.constraintlayout.widget.ConstraintLayout
+        android:id="@+id/loginContainer"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:clipToPadding="false">
+        <!--
+          clipToPadding=false 必须保留：MainActivity 会把状态栏/挖孔/键盘高度加成本容器的 padding，
+          而 ViewGroup 默认 clipToPadding=true 会在 padding 边界裁掉子 View ——
+          那样两个装饰光斑会被"状态栏那条线"切断，状态栏区域只剩纯渐变、
+          下面才有光斑颜色，看起来就是一条色差带（割裂感）。
+        -->
+
+        <!-- 装饰光斑：玻璃模糊的"色彩来源"，不参与业务逻辑 -->
+        <View
+            android:layout_width="240dp"
+            android:layout_height="240dp"
+            android:layout_marginStart="-80dp"
+            android:layout_marginTop="-60dp"
+            android:background="@drawable/bg_glass_blob_blue"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintTop_toTopOf="parent" />
+
+        <View
+            android:layout_width="260dp"
+            android:layout_height="260dp"
+            android:layout_marginEnd="-90dp"
+            android:layout_marginBottom="-40dp"
+            android:background="@drawable/bg_glass_blob_purple"
+            app:layout_constraintBottom_toBottomOf="parent"
+            app:layout_constraintEnd_toEndOf="parent" />
+
+        <!--
+          图标：不再垫玻璃圆盘、也不加投影（半透明圆盘上的投影会透出来显脏），
+          等正式图标到位后直接替换 android:src 即可
+        -->
+        <ImageView
+            android:id="@+id/ManyCourseIcon"
+            android:layout_width="96dp"
+            android:layout_height="96dp"
+            android:layout_marginTop="12dp"
+            android:contentDescription="@null"
+            android:scaleType="fitCenter"
+            app:layout_constraintBottom_toTopOf="@id/LoginTitle"
+            app:layout_constraintEnd_toEndOf="parent"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintTop_toTopOf="parent"
+            app:layout_constraintVertical_bias="0"
+            app:layout_constraintVertical_chainStyle="packed"
+            tools:src="@mipmap/many_course_icon_" />
+
+        <TextView
+            android:id="@+id/LoginTitle"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="24dp"
+            android:fontFamily="sans-serif-medium"
+            android:letterSpacing="0.01"
+            android:paddingStart="24dp"
+            android:paddingEnd="24dp"
+            android:text="@string/login_page_title"
+            android:textAlignment="center"
+            android:textColor="@color/login_title"
+            android:textSize="26sp"
+            android:textStyle="bold"
+            app:layout_constraintBottom_toTopOf="@id/login_info_textView"
+            app:layout_constraintEnd_toEndOf="parent"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintTop_toBottomOf="@id/ManyCourseIcon" />
+
+        <TextView
+            android:id="@+id/login_info_textView"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:gravity="center"
+            android:minHeight="20dp"
+            android:textColor="@color/login_info_error"
+            android:textSize="13sp"
+            app:layout_constraintBottom_toTopOf="@id/glassCard"
+            app:layout_constraintEnd_toEndOf="parent"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintTop_toBottomOf="@id/LoginTitle"
+            tools:text="用户名或密码错误" />
+
+        <!--
+          液态玻璃卡片：表单容器（高不透明度 + 1dp 描边，保证正文对比度）
+          cardPreventCornerOverlap=false + cardUseCompatPadding=false + cardElevation=0：
+          避免 CardView 因圆角/阴影给内容加内边距，出现"卡里还有一张小卡"的内缩观感
+
+          margin 24dp→16dp、内边距 16dp→12dp：把卡片往两侧撑宽，
+          让输入框的文本区从 574px 变成约 640px。这是为了「南京航空航天大学金城学院」
+          这类 12 字长校名 —— 它在 16sp 下需要 618px，原来放不下只能缩字号（显得比
+          其它输入框小一号）。宽度只能从容器上要：EditText 自己的 paddingStart/End
+          会被 Material 覆盖（真机实测无效），startIconMinSize 会把图标挪位（实测左移 33px）。
+        -->
+        <com.google.android.material.card.MaterialCardView
+            android:id="@+id/glassCard"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="16dp"
+            android:layout_marginTop="28dp"
+            android:layout_marginEnd="16dp"
+            android:layout_marginBottom="24dp"
+            app:cardBackgroundColor="@color/login_card_bg"
+            app:cardCornerRadius="24dp"
+            app:cardElevation="0dp"
+            app:cardPreventCornerOverlap="false"
+            app:cardUseCompatPadding="false"
+            app:layout_constraintBottom_toBottomOf="parent"
+            app:layout_constraintEnd_toEndOf="parent"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintTop_toBottomOf="@id/login_info_textView"
+            app:strokeColor="@color/login_card_stroke"
+            app:strokeWidth="1dp">
+
+            <!-- 内边距 12dp（原 16dp）：配合上面的 margin，把文本区撑到约 640px，见卡片注释 -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:paddingStart="12dp"
+                android:paddingTop="20dp"
+                android:paddingEnd="12dp"
+                android:paddingBottom="20dp">
+
+                <!--
+                  学校选择：ExposedDropdownMenu = 只读的下拉框（点哪都能展开，不弹键盘）。
+                  用 MaterialAutoCompleteTextView（而不是 AutoCompleteTextView）才能吃到
+                  Material 的菜单定位与最小宽度；选项内容 / 弹窗底色由
+                  MainActivity 里的 SchoolDropdownAdapter 和 bg_school_dropdown 提供。
+                  学校清单来自 gr_api/SchoolRegistry，加学校不用改这个布局。
+                -->
+                <com.google.android.material.textfield.TextInputLayout
+                    android:id="@+id/schoolSelect"
+                    style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox.ExposedDropdownMenu"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:hint="@string/login_page_school"
+                    app:boxBackgroundColor="@color/login_field_bg"
+                    app:boxCornerRadiusBottomEnd="12dp"
+                    app:boxCornerRadiusBottomStart="12dp"
+                    app:boxCornerRadiusTopEnd="12dp"
+                    app:boxCornerRadiusTopStart="12dp"
+                    app:boxStrokeColor="@color/login_field_stroke_focused"
+                    app:boxStrokeWidth="1dp"
+                    app:boxStrokeWidthFocused="2dp"
+                    app:endIconTint="@color/login_field_icon"
+                    app:hintTextColor="@color/login_field_hint"
+                    app:startIconDrawable="@drawable/ic_login_school"
+                    app:startIconTint="@color/login_field_icon">
+                    <!--
+                      单行显示校名（maxLines=1），宽度不够时由 MainActivity 的
+                      fitCurrentTextToOneLine() 兜底缩字号；正常情况下靠下面的
+                      paddingStart/End 把宽度省出来，字号根本不用缩。
+                      这里刻意**不加** android:scrollHorizontally：
+                      它会让文本按无限宽度去排，ellipsize 就失效了，
+                      真到极端情况反而没有省略号兜底。
+                    -->
+                    <!--
+                      单行显示校名（maxLines=1），长名字由 MainActivity 的
+                      fitCurrentTextToOneLine() 兜底：放不下才缩字号。
+                      正常情况下靠"卡片整体放宽"（见 glassCard 的 margin 与下方 padding）把宽度留够，
+                      字号根本不用缩。
+                      这里刻意**不加** android:scrollHorizontally：
+                      它会让文本按无限宽度去排，ellipsize 就失效了，
+                      真到极端情况反而没有省略号兜底。
+                      也**不要**写 paddingStart/End 或动 startIconMinSize：
+                      前者会被 Material 的 TextInputLayout 覆盖（真机实测无效），
+                      后者会把图标挪位（实测左移 33px、与相邻字段错位）。
+                    -->
+                    <com.google.android.material.textfield.MaterialAutoCompleteTextView
+                        android:id="@+id/EditSchool"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:cursorVisible="false"
+                        android:ellipsize="end"
+                        android:inputType="none"
+                        android:maxLines="1"
+                        android:paddingTop="14dp"
+                        android:paddingBottom="14dp"
+                        android:popupBackground="@drawable/bg_school_dropdown"
+                        android:textColor="@color/login_field_text"
+                        android:textSize="16sp"
+                        tools:text="南京航空航天大学金城学院" />
+                </com.google.android.material.textfield.TextInputLayout>
+
+                <com.google.android.material.textfield.TextInputLayout
+                    android:id="@+id/UserName"
+                    style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="14dp"
+                    android:hint="@string/login_page_username"
+                    app:boxBackgroundColor="@color/login_field_bg"
+                    app:boxCornerRadiusBottomEnd="12dp"
+                    app:boxCornerRadiusBottomStart="12dp"
+                    app:boxCornerRadiusTopEnd="12dp"
+                    app:boxCornerRadiusTopStart="12dp"
+                    app:boxStrokeColor="@color/login_field_stroke_focused"
+                    app:boxStrokeWidth="1dp"
+                    app:boxStrokeWidthFocused="2dp"
+                    app:cursorColor="@color/login_field_stroke_focused"
+                    app:hintTextColor="@color/login_field_hint"
+                    app:startIconDrawable="@drawable/ic_login_user"
+                    app:startIconTint="@color/login_field_icon">
+
+                    <com.google.android.material.textfield.TextInputEditText
+                        android:id="@+id/EditUserName"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:ellipsize="end"
+                        android:imeOptions="actionNext"
+                        android:inputType="text"
+                        android:maxLines="1"
+                        android:paddingTop="14dp"
+                        android:paddingBottom="14dp"
+                        android:scrollHorizontally="true"
+                        android:textColor="@color/login_field_text"
+                        android:textColorHighlight="@color/login_field_highlight"
+                        android:textSize="16sp" />
+                </com.google.android.material.textfield.TextInputLayout>
+
+                <com.google.android.material.textfield.TextInputLayout
+                    android:id="@+id/password"
+                    style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="14dp"
+                    android:hint="@string/login_page_password"
+                    app:boxBackgroundColor="@color/login_field_bg"
+                    app:boxCornerRadiusBottomEnd="12dp"
+                    app:boxCornerRadiusBottomStart="12dp"
+                    app:boxCornerRadiusTopEnd="12dp"
+                    app:boxCornerRadiusTopStart="12dp"
+                    app:boxStrokeColor="@color/login_field_stroke_focused"
+                    app:boxStrokeWidth="1dp"
+                    app:boxStrokeWidthFocused="2dp"
+                    app:cursorColor="@color/login_field_stroke_focused"
+                    app:endIconMode="password_toggle"
+                    app:endIconTint="@color/login_field_icon"
+                    app:hintTextColor="@color/login_field_hint"
+                    app:startIconDrawable="@drawable/ic_login_password"
+                    app:startIconTint="@color/login_field_icon">
+
+                    <com.google.android.material.textfield.TextInputEditText
+                        android:id="@+id/EditPassword"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:imeOptions="actionDone"
+                        android:inputType="textPassword"
+                        android:maxLines="1"
+                        android:paddingTop="14dp"
+                        android:paddingBottom="14dp"
+                        android:textColor="@color/login_field_text"
+                        android:textColorHighlight="@color/login_field_highlight"
+                        android:textSize="16sp" />
+                </com.google.android.material.textfield.TextInputLayout>
+
+                <!--
+                  验证码区块（默认隐藏，android:visibility="gone"）。
+
+                  为什么需要它：广州软件学院的统一身份认证对**每一次**账号密码登录都要求填验证码，
+                  而验证码是一张**算术题图片**（前端 loginType 接口返回 isVerifyCode=1），
+                  只能由人来看。登录返回 LoginResult.NeedCaptcha 时才显示这一块。
+
+                  放在密码框与登录按钮之间：位置跟其它学校登录页的习惯一致，
+                  而且它在卡片里，宽度由父 LinearLayout 决定，不会破坏现有的单行校名布局。
+                -->
+                <LinearLayout
+                    android:id="@+id/captchaBlock"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="14dp"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal"
+                    android:visibility="gone"
+                    tools:visibility="visible">
+
+                    <ImageView
+                        android:id="@+id/captchaImage"
+                        android:layout_width="100dp"
+                        android:layout_height="34dp"
+                        android:background="@color/login_field_bg"
+                        android:contentDescription="@string/login_page_captcha_hint"
+                        android:scaleType="fitCenter" />
+
+                    <com.google.android.material.textfield.TextInputLayout
+                        android:id="@+id/captchaInput"
+                        style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_marginStart="10dp"
+                        android:layout_weight="1"
+                        android:hint="@string/login_page_captcha_hint"
+                        app:boxBackgroundColor="@color/login_field_bg"
+                        app:boxCornerRadiusBottomEnd="12dp"
+                        app:boxCornerRadiusBottomStart="12dp"
+                        app:boxCornerRadiusTopEnd="12dp"
+                        app:boxCornerRadiusTopStart="12dp"
+                        app:boxStrokeColor="@color/login_field_stroke_focused"
+                        app:boxStrokeWidth="1dp"
+                        app:boxStrokeWidthFocused="2dp"
+                        app:cursorColor="@color/login_field_stroke_focused"
+                        app:hintTextColor="@color/login_field_hint">
+
+                        <com.google.android.material.textfield.TextInputEditText
+                            android:id="@+id/EditCaptcha"
+                            android:layout_width="match_parent"
+                            android:layout_height="wrap_content"
+                            android:imeOptions="actionDone"
+                            android:inputType="number"
+                            android:maxLength="3"
+                            android:maxLines="1"
+                            android:textColor="@color/login_field_text"
+                            android:textSize="16sp" />
+                    </com.google.android.material.textfield.TextInputLayout>
+                </LinearLayout>
+
+                <TextView
+                    android:id="@+id/captchaTip"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="6dp"
+                    android:text="@string/login_page_captcha_tip"
+                    android:textColor="@color/login_field_hint"
+                    android:textSize="12sp"
+                    android:visibility="gone"
+                    tools:visibility="visible" />
+
+                <!--
+                  insetTop/insetBottom=0：让渐变胶囊铺满 54dp 的高度与整个卡片内宽，
+                  否则 MaterialButton 会按阴影内缩，看起来像"卡片里的小卡片"
+                -->
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/login_button"
+                    android:layout_width="match_parent"
+                    android:layout_height="54dp"
+                    android:layout_marginTop="24dp"
+                    android:background="@drawable/bg_login_button"
+                    android:insetTop="0dp"
+                    android:insetBottom="0dp"
+                    android:letterSpacing="0.05"
+                    android:text="@string/login_page_login_button"
+                    android:textColor="@color/white"
+                    android:textSize="16sp"
+                    android:textStyle="bold"
+                    app:backgroundTint="@null"
+                    app:elevation="4dp" />
+            </LinearLayout>
+        </com.google.android.material.card.MaterialCardView>
+    </androidx.constraintlayout.widget.ConstraintLayout>
+</androidx.core.widget.NestedScrollView>

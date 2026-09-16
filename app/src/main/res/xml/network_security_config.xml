@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  网络安全配置。
+
+  ⚠️ 这份文件只为一件事存在：**广州软件学院的正方教务系统会自己下发明文（http）跳转**。
+
+  实测它的登录链路（抓包核对）：
+
+      https://jwxt.gzus.edu.cn/jwglxt/ticketlogin?uid=…       → 302 → http://jwxt.gzus.edu.cn/jwglxt/xtgl/login_slogin.html
+      http://jwxt.gzus.edu.cn/jwglxt/xtgl/login_slogin.html   → 302 → https://…（同一个路径，绕一圈又回来）
+      https://jwxt.gzus.edu.cn/jwglxt/xtgl/login_slogin.html  → 302 → http://jwxt.gzus.edu.cn/jwglxt/xtgl/index_initMenu.html
+      http://jwxt.gzus.edu.cn/jwglxt/xtgl/index_initMenu.html → 302 → https://…（同一个路径）
+
+  而 Android 从 targetSdk 28 起**默认禁止明文流量**，OkHttp 一到那两条 http 地址就抛
+  `CLEARTEXT communication to jwxt.gzus.edu.cn not permitted by network security policy`，
+  表现为登录卡在"换取教务系统会话"。**会话过期时也会撞上** ——
+  未登录访问 https 的 index_initMenu 同样是 302 到 http 的登录页。
+
+  ## 为什么这里选择"开豁免"而不是在客户端把 http 改成 https
+
+  乍看"客户端升级成 https"更漂亮（那些 http 地址确实是同路径的 https 镜像），
+  但实际做不成：**OkHttp 的自动重定向不会重跑应用拦截器**
+  （重定向发生在 RetryAndFollowUpInterceptor 里，它在应用拦截器链条的**内部**），
+  所以拦截器只能改到"第一个"地址，改不到服务端 302 出来的那些。
+  放到网络拦截器又能被调用到，但**加 Cookie 的 BridgeInterceptor 在网络拦截器之前** ——
+  它会按 http 地址计算该带哪些 Cookie，于是 `Secure` 的会话 Cookie 会被丢掉，
+  等于把登录态弄没。要真正干净地做，得自己实现整套重定向跟随（连 307/308 的方法体语义一起），
+  代价和风险都不小，而且**没法在没有真实会话的情况下验证**。
+
+  而"开豁免"就完全等价于浏览器的行为 —— 浏览器就是这么走的，抓包已经证明它能登录成功。
+
+  ## 安全影响（评估过）
+
+  - **只对这一个域名放开**，`base-config` 仍然是 `cleartextTrafficPermitted="false"`，
+    全局明文仍然是禁止的；
+  - 那两条 http 跳转**不携带任何凭据**（只是 `login_slogin.html` / `index_initMenu.html` 这类页面地址，
+    没有参数），密码与票据全都在 https 上传输；
+  - 一旦学校修好 nginx 的 `Location`，这份豁免应该删掉。
+
+  将来若有别的学校也这样，**只加它自己的域名**，不要图省事改成全局
+  `usesCleartextTraffic="true"`（那等于对全世界放开明文）。
+-->
+<network-security-config>
+
+    <!-- 默认：禁止明文。不要改成 true -->
+    <base-config cleartextTrafficPermitted="false" />
+
+    <!-- 例外：自己会下发明文跳转的学校 -->
+    <domain-config cleartextTrafficPermitted="true">
+        <!-- 广州软件学院 · 正方教务系统 -->
+        <domain includeSubdomains="false">jwxt.gzus.edu.cn</domain>
+    </domain-config>
+
+</network-security-config>

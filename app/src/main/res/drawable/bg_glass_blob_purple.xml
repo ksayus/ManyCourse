@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 装饰光斑（靛紫）：径向渐变圆，与蓝色光斑形成撞色层次 -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="oval">
+    <gradient
+        android:centerColor="@color/login_blob_purple_center"
+        android:endColor="@color/login_blob_purple_end"
+        android:gradientRadius="130dp"
+        android:startColor="@color/login_blob_purple_start"
+        android:type="radial" />
+</shape>

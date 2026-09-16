@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Tab 进入：**纯淡入，不做位移**。
+  以前这里是 alpha + 8dp 上移，问题在于动画是加在**整个 Fragment 视图**上的 ——
+  底部导航栏也长在 Fragment 里，于是它跟着一起上下抖。
+  改成纯 alpha 之后，两页的底栏在交叉期间位置完全一致（而且读的是同一份
+  选中态、同一帧背景），视觉上纹丝不动；真正变化的是标题与内容。
+  时长与 tab_exit 必须**完全相同**、插值器也相同：这样 out+in 的 alpha 恒等于 1，
+  交叉期间不会出现整体发暗（各自独立计时就会）。
+-->
+<set xmlns:android="http://schemas.android.com/apk/res/android"
+    android:interpolator="@android:interpolator/fast_out_slow_in"
+    android:shareInterpolator="true">
+
+    <alpha
+        android:duration="240"
+        android:fromAlpha="0.0"
+        android:toAlpha="1.0" />
+</set>

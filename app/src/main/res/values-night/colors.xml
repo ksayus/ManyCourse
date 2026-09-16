@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  登录页夜间模式令牌：与 values/colors.xml 同名覆盖。
+  取值与 Compose 侧 glassTokens(mode, dark = true) 对齐，保证登录页与主界面观感一致。
+-->
+<resources>
+    <!-- 页面背景渐变 -->
+    <color name="login_bg_start">#0B1220</color>
+    <color name="login_bg_center">#131C2E</color>
+    <color name="login_bg_end">#0E1729</color>
+
+    <!-- 装饰光斑（夜间降低强度，避免在暗底上过曝） -->
+    <color name="login_blob_blue_start">#3D4C8DF6</color>
+    <color name="login_blob_blue_center">#144C8DF6</color>
+    <color name="login_blob_blue_end">#004C8DF6</color>
+    <color name="login_blob_purple_start">#337C4DFF</color>
+    <color name="login_blob_purple_center">#117C4DFF</color>
+    <color name="login_blob_purple_end">#007C4DFF</color>
+
+    <!-- 图标玻璃底座 -->
+    <color name="login_icon_disc">#1FFFFFFF</color>
+    <color name="login_icon_stroke">#33FFFFFF</color>
+
+    <!-- 文本（深底浅字，正文对比度 ≥ 4.5:1） -->
+    <color name="login_title">#E2E8F0</color>
+    <color name="login_info_error">#F87171</color>
+    <color name="login_info_ok">#4ADE80</color>
+
+    <!-- 玻璃卡片 -->
+    <color name="login_card_bg">#D91E293B</color>
+    <color name="login_card_stroke">#33FFFFFF</color>
+
+    <!-- 输入框：比卡片更深一档，形成清晰的"输入区"层级 -->
+    <color name="login_field_bg">#0F172A</color>
+    <color name="login_field_stroke">#475569</color>
+    <color name="login_field_stroke_focused">#60A5FA</color>
+    <color name="login_field_text">#E2E8F0</color>
+    <color name="login_field_hint">#94A3B8</color>
+    <color name="login_field_icon">#60A5FA</color>
+    <color name="login_field_highlight">#334155</color>
+
+    <!-- 登录按钮 -->
+    <color name="login_button_start">#3B82F6</color>
+    <color name="login_button_end">#1D4ED8</color>
+    <color name="login_button_ripple">#93C5FD</color>
+
+    <!-- 学校下拉弹窗：与玻璃卡片同色系但更实（弹窗没有背后的模糊衬托） -->
+    <color name="login_dropdown_bg">#F71E293B</color>
+    <color name="login_dropdown_stroke">#33FFFFFF</color>
+</resources>

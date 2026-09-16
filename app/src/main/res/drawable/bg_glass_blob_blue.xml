@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 装饰光斑（蓝）：径向渐变圆，模拟玻璃后的彩色折射 -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="oval">
+    <gradient
+        android:centerColor="@color/login_blob_blue_center"
+        android:endColor="@color/login_blob_blue_end"
+        android:gradientRadius="120dp"
+        android:startColor="@color/login_blob_blue_start"
+        android:type="radial" />
+</shape>

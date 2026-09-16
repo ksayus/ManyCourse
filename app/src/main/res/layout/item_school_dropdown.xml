@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  学校下拉的单项：两行式（校名 + 教务系统域名）。
+  域名这一行是刻意加的：学校全称很长，容易看不出"选错学校"，
+  而 jwxt.xxx.edu.cn 这种域名一眼就能确认；将来同名/同城学校多了也不会选错。
+  文字颜色全部走 @color/login_* 令牌，夜间模式自动适配。
+
+  校名单行显示：下拉弹窗比输入框宽（弹窗只有 16dp 内边距，没有左右图标占位），
+  实测最长的「南京航空航天大学金城学院」在弹窗里仍有 150px 以上余量，一行放得下，
+  所以这里不需要在列表里也做字号自适应。
+  极端长名仍有 ellipsize 兜底，不会把行撑高、也不会糊出边界。
+-->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:paddingStart="16dp"
+    android:paddingTop="10dp"
+    android:paddingEnd="16dp"
+    android:paddingBottom="10dp">
+
+    <TextView
+        android:id="@+id/school_item_name"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:ellipsize="end"
+        android:maxLines="1"
+        android:textColor="@color/login_field_text"
+        android:textSize="16sp"
+        tools:text="南京航空航天大学金城学院" />
+
+    <TextView
+        android:id="@+id/school_item_host"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="2dp"
+        android:ellipsize="end"
+        android:maxLines="1"
+        android:textColor="@color/login_field_hint"
+        android:textSize="12sp"
+        tools:text="jwxt.gzus.edu.cn" />
+</LinearLayout>

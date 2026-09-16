@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  登录页设计令牌（浅色）。夜间模式在 values-night/colors.xml 覆盖同名字段，
+  所有 drawable 与布局都引用这里，避免硬编码颜色导致夜间模式失效。
+-->
+<resources>
+    <color name="purple_200">#FFBB86FC</color>
+    <color name="purple_500">#FF6200EE</color>
+    <color name="purple_700">#FF3700B3</color>
+    <color name="teal_200">#FF03DAC5</color>
+    <color name="teal_700">#FF018786</color>
+    <color name="black">#FF000000</color>
+    <color name="white">#FFFFFFFF</color>
+
+    <!-- 页面背景渐变（与 Compose 侧 glassTokens.backgroundGradient 取值一致） -->
+    <color name="login_bg_start">#DCEAFF</color>
+    <color name="login_bg_center">#F5F9FF</color>
+    <color name="login_bg_end">#E8F0FE</color>
+
+    <!-- 装饰光斑 -->
+    <color name="login_blob_blue_start">#4D90CAF9</color>
+    <color name="login_blob_blue_center">#1A90CAF9</color>
+    <color name="login_blob_blue_end">#0090CAF9</color>
+    <color name="login_blob_purple_start">#407C4DFF</color>
+    <color name="login_blob_purple_center">#147C4DFF</color>
+    <color name="login_blob_purple_end">#007C4DFF</color>
+
+    <!-- 图标玻璃底座 -->
+    <color name="login_icon_disc">#59FFFFFF</color>
+    <color name="login_icon_stroke">#8CFFFFFF</color>
+
+    <!-- 文本 -->
+    <color name="login_title">#0D47A1</color>
+    <color name="login_info_error">#D32F2F</color>
+    <color name="login_info_ok">#2E7D32</color>
+
+    <!-- 玻璃卡片 -->
+    <color name="login_card_bg">#D9FFFFFF</color>
+    <color name="login_card_stroke">#80FFFFFF</color>
+
+    <!-- 输入框：比卡片略深一档，形成清晰的"输入区"层级 -->
+    <color name="login_field_bg">#EAF1FC</color>
+    <color name="login_field_stroke">#93B4E8</color>
+    <color name="login_field_stroke_focused">#1976D2</color>
+    <color name="login_field_text">#0D47A1</color>
+    <color name="login_field_hint">#1976D2</color>
+    <color name="login_field_icon">#1976D2</color>
+    <color name="login_field_highlight">#BBDEFB</color>
+
+    <!-- 登录按钮 -->
+    <color name="login_button_start">#1E88E5</color>
+    <color name="login_button_end">#0D47A1</color>
+    <color name="login_button_ripple">#64B5F6</color>
+
+    <!-- 学校下拉弹窗：弹窗是独立 Window，衬在页面渐变上，必须接近不透明才看得清 -->
+    <color name="login_dropdown_bg">#F7FFFFFF</color>
+    <color name="login_dropdown_stroke">#331976D2</color>
+</resources>

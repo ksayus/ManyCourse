@@ -1,0 +1,102 @@
+package com.tof.manycourse.ui
+
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.StrokeJoin
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.graphics.vector.PathParser
+import androidx.compose.ui.unit.dp
+
+/**
+ * campus-schedule 设计系统图标（来源：ui_kits/app/index.html 内联 SVG）
+ * 24x24 描边风格，strokeWidth=2，圆角端点；使用时通过 Icon(tint=…) 上色
+ */
+object AppIcons {
+
+    private fun strokeIcon(vararg paths: String): ImageVector =
+        ImageVector.Builder(
+            name = "AppIcon",
+            defaultWidth = 24.dp,
+            defaultHeight = 24.dp,
+            viewportWidth = 24f,
+            viewportHeight = 24f,
+        ).apply {
+            paths.forEach { data ->
+                addPath(
+                    pathData = PathParser().parsePathString(data).toNodes(),
+                    fill = null,
+                    stroke = SolidColor(Color.Black),
+                    strokeLineWidth = 2f,
+                    strokeLineCap = StrokeCap.Round,
+                    strokeLineJoin = StrokeJoin.Round,
+                )
+            }
+        }.build()
+
+    val Home: ImageVector by lazy {
+        strokeIcon("M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 0 0 1 1h3m10-11l2 2m-2-2v10a1 1 0 0 1-1 1h-3m-6 0a1 1 0 0 0 1-1v-4a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1v4a1 1 0 0 0 1 1m-6 0h6")
+    }
+
+    val Calendar: ImageVector by lazy {
+        strokeIcon(
+            "M5 4h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2z",
+            "M16 2v4", "M8 2v4", "M3 10h18",
+        )
+    }
+
+    val User: ImageVector by lazy {
+        strokeIcon(
+            "M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2",
+            "M12 3a4 4 0 1 1 0 8a4 4 0 1 1 0-8",
+        )
+    }
+
+    val Bell: ImageVector by lazy {
+        strokeIcon(
+            "M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9",
+            "M13.73 21a2 2 0 0 1-3.46 0",
+        )
+    }
+
+    val Plus: ImageVector by lazy {
+        strokeIcon("M12 5v14", "M5 12h14")
+    }
+
+    val Clock: ImageVector by lazy {
+        strokeIcon(
+            "M12 2a10 10 0 1 1 0 20a10 10 0 1 1 0-20",
+            "M12 6v6l4 2",
+        )
+    }
+
+    val MapPin: ImageVector by lazy {
+        strokeIcon(
+            "M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z",
+            "M12 7a3 3 0 1 1 0 6a3 3 0 1 1 0-6",
+        )
+    }
+
+    val BookOpen: ImageVector by lazy {
+        strokeIcon(
+            "M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z",
+            "M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z",
+        )
+    }
+
+    val ChevronLeft: ImageVector by lazy {
+        strokeIcon("M15 18l-6-6 6-6")
+    }
+
+    val ChevronRight: ImageVector by lazy {
+        strokeIcon("M9 18l6-6-6-6")
+    }
+
+    val Close: ImageVector by lazy {
+        strokeIcon("M18 6L6 18", "M6 6l12 12")
+    }
+
+    val Edit: ImageVector by lazy {
+        strokeIcon("M17 3a2.83 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z")
+    }
+}

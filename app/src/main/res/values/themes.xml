@@ -1,0 +1,3 @@
+<resources>
+    <style name="Theme.ManyCourse" parent="Theme.MaterialComponents.DayNight.NoActionBar.Bridge"/>
+</resources>

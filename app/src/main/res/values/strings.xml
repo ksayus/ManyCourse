@@ -1,0 +1,21 @@
+<resources>
+    <string name="app_name">ManyCourse</string>
+    <string name="login_page_title">课多多</string>
+    <string name="login_page_school">学校</string>
+    <string name="login_page_username">用户名</string>
+    <string name="login_page_password">密码</string>
+    <string name="login_page_login_button">登录</string>
+    <string name="login_page_logging_in">登录中…</string>
+    <string name="login_page_error_school">请选择学校</string>
+    <string name="login_page_error_username">请输入用户名</string>
+    <string name="login_page_error_password">请输入密码</string>
+    <string name="login_page_login_success">登录成功</string>
+    <string name="login_page_login_success_local">登录成功（本地调试账号）</string>
+    <string name="login_page_captcha_hint">填得数</string>
+    <string name="login_page_captcha_tip">请输入图片中算式的得数；答错会换一张新图</string>
+    <string name="login_page_error_captcha">请输入验证码</string>
+    <string name="debug_user_info">用户名: %1$s\n密码: %2$s</string>
+    <string name="bottom_nav_menu_class_schedule">课表</string>
+    <string name="bottom_nav_menu_calender">日历</string>
+    <string name="bottom_nav_menu_self">我的</string>
+</resources>

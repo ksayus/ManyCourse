@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 图标玻璃底座：半透明圆盘 + 高光描边，营造"浮在玻璃上"的质感 -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="oval">
+    <solid android:color="@color/login_icon_disc" />
+    <stroke
+        android:width="1dp"
+        android:color="@color/login_icon_stroke" />
+</shape>

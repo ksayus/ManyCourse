@@ -1,0 +1,59 @@
+# ══════════════════════════════════════════════════════════════════════════
+#  这个仓库只放**和 App 有关的东西**：
+#
+#    ① 能编译出 App 的源码与工程配置
+#       app/src/main/ 、gradle/ 、build.gradle.kts 、settings.gradle.kts 、gradlew*
+#    ② 与它直接相关的文档、测试、开发脚本
+#       docs/ 、app/src/test/（JVM 单测）、app/src/androidTest/（真机测试）、tools/
+#
+#  其余一律不提交：构建产物、本机配置、签名密钥、IDE 状态、抓包、无关素材。
+#  ★ 判断标准就一条：**换台机器 clone 下来，这条规则忽略的东西能不能自动重建？**
+#    能（build/、.gradle/、.idea/）就忽略；不能（源码、测试、文档、wrapper）就提交。
+# ══════════════════════════════════════════════════════════════════════════
+
+# ── 构建产物 ────────────────────────────────────────────────────────────
+# 编译/打包结果：换台机器 build 一次就有，而且 diff 全是二进制，review 不了
+# （模块内的 app/build 由 app/.gitignore 负责）
+/build
+/app/release/
+*.apk
+*.aab
+*.ap_
+*.dex
+*.hprof
+/captures
+.externalNativeBuild
+.cxx
+
+# ── 本机配置与签名密钥 ★ 绝对不能提交 ──────────────────────────────────
+# local.properties 里是**这台机器**的 SDK 路径，别人 clone 下来必须自己写一份；
+# *.jks / *.keystore 是签名密钥 —— 提交上去等于把"能发布这个 App"的能力也交出去。
+local.properties
+*.jks
+*.keystore
+keystore.properties
+signing.properties
+
+# ── IDE / 工具链状态 ────────────────────────────────────────────────────
+# Android Studio 打开工程时会自己重建；提交了只会天天产生无意义 diff
+# （尤其是 .idea/workspace.xml，全是"我刚点了哪个文件"这种本机状态）
+.idea/
+*.iml
+.gradle/
+.kotlin/
+.DS_Store
+Thumbs.db
+*.log
+
+# ── 抓包导出 ────────────────────────────────────────────────────────────
+# HAR 是**完整会话记录**：姓名、学号、班级、课表、Cookie 全在里面，
+# 属于个人信息，只在本机拿来核对接口用（见 docs/教务API接入与调用指南.md §5.1）
+/web_fetch
+
+# ── 与工程无关的素材 ────────────────────────────────────────────────────
+# 根目录这两张是 UI 效果图，app/ 与 docs/ 里没有任何引用
+/v2_portrait.png
+/v2_restore.png
+# campus-schedule 是设计系统的一次性导出（HTML/CSS/JSON 预览页 + SKILL.md），
+# 既不参与编译、也没被 app/ 引用 —— 设计稿留在本地看就行
+/campus-schedule/

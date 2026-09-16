@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  方向策略：两款 Activity 都固定为竖屏（screenOrientation="portrait"）。
+  原因：应用是竖屏设计的手机界面（底栏 + 竖排列表），在"自动旋转关闭"的设备上
+  物理旋转手机时，系统会在应用上层弹出可点击的"旋转屏幕"黑色提示按钮；
+  声明固定方向后系统认为该应用不可旋转，就不会再弹这个提示，应用内也无法被转成横屏。
+  说明：Android 16 (API 36) 起，大屏设备（最小宽度 ≥600dp，如平板/展开态折叠屏）
+  会忽略方向限制，届时应用仍可横屏——页面本身已做安全区适配，横屏不会错版。
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <!--
+      登录要访问各校教务系统（https）。
+      OkHttp 走的是 socket，没有这条权限会直接抛 SecurityException，
+      表现为"点了登录没反应"——之前 GRClassAPI 没接线所以一直没暴露。
+    -->
+    <uses-permission android:name="android.permission.INTERNET" />
+
+    <application
+        android:name=".ManyCourseApp"
+        android:allowBackup="true"
+        android:dataExtractionRules="@xml/data_extraction_rules"
+        android:fullBackupContent="@xml/backup_rules"
+        android:icon="@mipmap/ic_launcher"
+        android:label="@string/app_name"
+        android:networkSecurityConfig="@xml/network_security_config"
+        android:roundIcon="@mipmap/ic_launcher_round"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.ManyCourse">
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:label="@string/app_name"
+            android:screenOrientation="portrait"
+            android:theme="@style/Theme.ManyCourse"
+            android:windowSoftInputMode="adjustResize"
+            tools:ignore="LockedOrientationActivity">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+        <activity
+            android:name=".ManyCourseMain"
+            android:exported="false"
+            android:screenOrientation="portrait"
+            android:windowSoftInputMode="adjustResize"
+            tools:ignore="LockedOrientationActivity" />
+    </application>
+
+</manifest>

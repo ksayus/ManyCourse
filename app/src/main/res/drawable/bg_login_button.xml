@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 登录按钮：蓝色渐变 + 水波纹，MaterialButton 需配合 app:backgroundTint="@null" 使用 -->
+<ripple xmlns:android="http://schemas.android.com/apk/res/android"
+    android:color="@color/login_button_ripple">
+    <item>
+        <shape android:shape="rectangle">
+            <gradient
+                android:angle="0"
+                android:endColor="@color/login_button_end"
+                android:startColor="@color/login_button_start"
+                android:type="linear" />
+            <corners android:radius="28dp" />
+        </shape>
+    </item>
+</ripple>

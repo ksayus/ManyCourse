@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  中文（简体/繁体/香港均命中 values-zh）系统下的应用名：桌面图标、最近任务（后台）卡片都取这里。
+  其他系统语言不命中本目录，回退到 values/strings.xml 的 ManyCourse，保持原有名称不变。
+  仅覆盖 app_name，其余文案继续沿用默认资源。
+-->
+<resources>
+    <string name="app_name">课多多</string>
+</resources>
