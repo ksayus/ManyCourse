@@ -21,10 +21,10 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -32,7 +32,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -40,29 +39,49 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import dev.chrisbanes.haze.HazeState
-import com.tof.manycourse.data.CourseRepository
 import com.tof.manycourse.data.ProfileRepository
 import com.tof.manycourse.data.SessionStore
 import com.tof.manycourse.data.UiSettings
+import com.tof.manycourse.data.WeekScheduleStore
+import com.tof.manycourse.data.currentWeekCourseCount
+import com.tof.manycourse.data.todayCourseCount
 import com.tof.manycourse.gr_api.SchoolRegistry
 import com.tof.manycourse.ui.components.GlassCard
-import com.tof.manycourse.ui.theme.GlassMode
 import com.tof.manycourse.ui.theme.LocalGlassMode
 import com.tof.manycourse.ui.theme.LocalGlassTokens
 
-/** 「我的」页：个人信息卡片（含编辑入口）+ 实时统计 + 外观设置（玻璃风格切换） */
+/**
+ * 「我的」页：个人信息卡片（含编辑入口）+ 实时统计 + **设置入口**。
+ *
+ * 所有开关（玻璃风格 / 日历布局 / 通知）都搬到了独立的 [SettingsScreen]：
+ * 这一页只负责"我是谁、我有什么"，设置页负责"怎么显示"，
+ * 否则"我的"会越加越长，把个人信息和统计挤到看不见。
+ *
+ * @param onOpenSettings 打开设置页（由 [SelfFragment] 承载，返回键可关）
+ * @param onEditProfile 打开编辑资料浮层
+ */
 @Composable
 fun ProfileScreen(
     hazeState: HazeState,
+    onOpenSettings: () -> Unit,
     onEditProfile: () -> Unit,
 ) {
     val nickname by ProfileRepository.nickname
     val major by ProfileRepository.major
 
-    // 实时计算统计数据
-    val weekCount = CourseRepository.weekCourseCount
-    val todayCount = CourseRepository.todayCourseCount
-    val notificationsEnabled by UiSettings.notificationsEnabled
+    // 实时计算统计数据。
+    // ★ 必须走 currentWeekCourseCount / todayCourseCount（与课表页、日历页同一个取值函数）：
+    //   以前这里是 `CourseRepository.courses.size`，那是**整学期**的课表条数，
+    //   和卡片上写的"本周课程"对不上（见 data/CourseEntries.kt 里的注释）。
+    val weekCount = currentWeekCourseCount()
+    val todayCount = todayCourseCount()
+
+    // 教学周列表可能比课表页晚到；到了就把本周的课补拉回来，否则上面两个数字会偏小。
+    // ensureWeek 对已缓存/在飞的周次是空操作，重复调无副作用。
+    val weekListSize = WeekScheduleStore.weeks.size
+    LaunchedEffect(weekListSize) {
+        WeekScheduleStore.currentWeek?.let { WeekScheduleStore.ensureWeek(it.index) }
+    }
 
     Column(
         Modifier
@@ -136,37 +155,8 @@ fun ProfileScreen(
 
         Spacer(Modifier.height(16.dp))
 
-        // ═══ 外观设置：高斯模糊 / 液态玻璃切换（选择持久化，切换即时生效）═══
-        GlassModeCard()
-
-        Spacer(Modifier.height(16.dp))
-
-        // ═══ 通知设置卡片（开关可切换，选择持久化）═══
-        GlassCard(cornerRadius = 12, modifier = Modifier.fillMaxWidth()) {
-            Row(
-                Modifier.padding(16.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Column(Modifier.weight(1f)) {
-                    Text(
-                        text = "通知设置",
-                        fontSize = 16.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        color = MaterialTheme.colorScheme.onSurface,
-                    )
-                    Spacer(Modifier.height(4.dp))
-                    Text(
-                        text = if (notificationsEnabled) "课前 15 分钟推送提醒" else "已关闭，不再推送提醒",
-                        fontSize = 15.sp,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-                Switch(
-                    checked = notificationsEnabled,
-                    onCheckedChange = { UiSettings.setNotificationsEnabled(it) },
-                )
-            }
-        }
+        // ═══ 设置入口：玻璃风格 / 日历布局 / 通知全在那一页里 ═══
+        SettingsEntryCard(onOpenSettings)
 
         Spacer(Modifier.height(16.dp))
 
@@ -174,6 +164,59 @@ fun ProfileScreen(
         AccountCard()
 
         Spacer(Modifier.height(24.dp))
+    }
+}
+
+/**
+ * 设置入口：一行「齿轮 + 设置 + 摘要 + ›」。
+ *
+ * 摘要写"当前用的什么"（玻璃风格 / 日历是周视图还是月视图），
+ * 这样不进设置页也能一眼知道现在是什么状态。
+ */
+@Composable
+private fun SettingsEntryCard(onOpen: () -> Unit) {
+    val tokens = LocalGlassTokens.current
+    val glassMode = LocalGlassMode.current
+    val gridLayout by UiSettings.calendarGridLayout
+    val summary = "玻璃风格：${glassMode.label} · 日历：${if (gridLayout) "周视图" else "月视图"}"
+
+    GlassCard(cornerRadius = 12, modifier = Modifier.fillMaxWidth()) {
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .clickable(onClick = onOpen)
+                .padding(16.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(
+                imageVector = AppIcons.Settings,
+                contentDescription = null,
+                tint = tokens.accent,
+                modifier = Modifier.size(22.dp),
+            )
+            Spacer(Modifier.width(12.dp))
+            Column(Modifier.weight(1f)) {
+                Text(
+                    text = "设置",
+                    fontSize = 16.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.onSurface,
+                )
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    text = summary,
+                    fontSize = 12.sp,
+                    lineHeight = 16.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            Icon(
+                imageVector = AppIcons.ChevronRight,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.size(20.dp),
+            )
+        }
     }
 }
 
@@ -257,86 +300,6 @@ private fun AccountCard() {
             dismissButton = {
                 TextButton(onClick = { confirmLogout = false }) { Text("取消") }
             },
-        )
-    }
-}
-
-/** 玻璃风格切换卡：全局统一样式令牌，切换后立即重组生效并写入偏好 */
-@Composable
-private fun GlassModeCard() {
-    val current = LocalGlassMode.current
-    GlassCard(cornerRadius = 12, modifier = Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(16.dp)) {
-            Text(
-                text = "外观 · 玻璃风格",
-                fontSize = 16.sp,
-                fontWeight = FontWeight.SemiBold,
-                color = MaterialTheme.colorScheme.onSurface,
-            )
-            Spacer(Modifier.height(4.dp))
-            Text(
-                text = "全局生效，选择会被记住",
-                fontSize = 12.sp,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            Spacer(Modifier.height(12.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                GlassMode.entries.forEach { mode ->
-                    GlassModeOption(
-                        mode = mode,
-                        selected = mode == current,
-                        onClick = { UiSettings.setGlassMode(mode) },
-                        modifier = Modifier.weight(1f),
-                    )
-                }
-            }
-            Spacer(Modifier.height(10.dp))
-            Text(
-                text = "当前：${current.label} · ${current.summary}",
-                fontSize = 12.sp,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
-    }
-}
-
-@Composable
-private fun GlassModeOption(
-    mode: GlassMode,
-    selected: Boolean,
-    onClick: () -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    val tokens = LocalGlassTokens.current
-    Column(
-        modifier = modifier
-            .clip(RoundedCornerShape(12.dp))
-            .background(
-                if (selected) MaterialTheme.colorScheme.primary.copy(alpha = 0.14f)
-                else Color.Transparent
-            )
-            .border(
-                width = 1.dp,
-                color = if (selected) tokens.accent else MaterialTheme.colorScheme.outline,
-                shape = RoundedCornerShape(12.dp),
-            )
-            .clickable(onClick = onClick)
-            .padding(horizontal = 10.dp, vertical = 12.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-    ) {
-        Text(
-            text = mode.label,
-            fontSize = 14.sp,
-            fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
-            color = if (selected) tokens.accent else MaterialTheme.colorScheme.onSurface,
-        )
-        Spacer(Modifier.height(4.dp))
-        Text(
-            text = mode.summary,
-            fontSize = 11.sp,
-            lineHeight = 15.sp,
-            textAlign = TextAlign.Center,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
     }
 }

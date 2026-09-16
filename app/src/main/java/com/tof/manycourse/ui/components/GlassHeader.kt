@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.displayCutout
@@ -16,6 +17,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.union
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -48,9 +50,18 @@ import com.tof.manycourse.ui.theme.LocalGlassTokens
  * - 玻璃背景铺满到屏幕物理边缘（安全区内边距加在背景之后），
  *   且**四周都不画描边/分隔线**：页头玻璃与内容色差极小，一条 1dp 线反而把
  *   "状态栏 + 标题"切成独立横条；内容在自己的滚动容器里，不会滚到页头下方。
+ *
+ * @param leading 标题左侧的控件（如设置页的「返回」）；默认没有
+ * @param actions 标题右侧、通知铃铛左侧的自定义控件（如日历页的「周/月」切换）；
+ *   铃铛自身保持不动，四个页面的页头结构才不会各长一样
  */
 @Composable
-fun GlassHeader(hazeState: HazeState, title: String) {
+fun GlassHeader(
+    hazeState: HazeState,
+    title: String,
+    leading: (@Composable () -> Unit)? = null,
+    actions: (@Composable () -> Unit)? = null,
+) {
     val contentColor = MaterialTheme.colorScheme.onSurface
     val tokens = LocalGlassTokens.current
     Column(Modifier.fillMaxWidth()) {
@@ -71,6 +82,10 @@ fun GlassHeader(hazeState: HazeState, title: String) {
                 Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
+                leading?.let {
+                    it()
+                    Spacer(Modifier.width(8.dp))
+                }
                 Text(
                     text = title,
                     fontSize = 18.sp,
@@ -79,6 +94,10 @@ fun GlassHeader(hazeState: HazeState, title: String) {
                     color = contentColor,
                     modifier = Modifier.weight(1f),
                 )
+                actions?.let {
+                    it()
+                    Spacer(Modifier.width(4.dp))
+                }
                 Icon(
                     imageVector = AppIcons.Bell,
                     contentDescription = "通知",

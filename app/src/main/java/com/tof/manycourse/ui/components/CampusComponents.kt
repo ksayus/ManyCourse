@@ -1,8 +1,12 @@
 package com.tof.manycourse.ui.components
 
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.IntrinsicSize
@@ -21,10 +25,13 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -79,7 +86,7 @@ fun GlassPanel(
 
 /**
  * 课程卡片：玻璃底 + 左侧蓝色强调条（规范：默认 4dp / 高亮 8dp）
- * 长按可删除课程
+ * 点击打开详情浮层，长按可删除课程（只有本地课可删）
  */
 @Composable
 fun CourseCard(
@@ -87,6 +94,7 @@ fun CourseCard(
     modifier: Modifier = Modifier,
     highlighted: Boolean = false,
     metaText: String? = null,
+    onClick: (() -> Unit)? = null,
     onLongClick: (() -> Unit)? = null,
 ) = CourseCard(
     name = course.name,
@@ -96,6 +104,7 @@ fun CourseCard(
     modifier = modifier,
     highlighted = highlighted,
     metaText = metaText ?: course.periodLabel,
+    onClick = onClick,
     onLongClick = onLongClick,
 )
 
@@ -106,6 +115,7 @@ fun CourseCard(
  * 卡片外观由下面的字段版实现，配色统一走 `CourseRepository.colorOfName(课名)`，
  * 于是同一门课在课表页、日历页、月历圆点里永远是同一个颜色。
  *
+ * @param onClick 点击卡片 → 打开课程详情浮层
  * @param onLongClick 只有本地课（[CourseEntry.Local]）才该传 —— 教务系统按周给的课
  *   删不掉（下次查还会回来），给它删除入口只会让用户以为删掉了。
  */
@@ -115,6 +125,7 @@ fun CourseCard(
     modifier: Modifier = Modifier,
     highlighted: Boolean = false,
     metaText: String? = null,
+    onClick: (() -> Unit)? = null,
     onLongClick: (() -> Unit)? = null,
 ) = when (course) {
     is CourseEntry.Week -> CourseCard(
@@ -125,6 +136,7 @@ fun CourseCard(
         modifier = modifier,
         highlighted = highlighted,
         metaText = metaText ?: course.periodLabel,
+        onClick = onClick,
         onLongClick = onLongClick,
     )
 
@@ -133,6 +145,7 @@ fun CourseCard(
         modifier = modifier,
         highlighted = highlighted,
         metaText = metaText,
+        onClick = onClick,
         onLongClick = onLongClick,
     )
 }
@@ -144,7 +157,15 @@ fun CourseCard(
  * （它不属于"用户自己的课表"），但它和本地课必须长得一样。
  * 与其在别处再抄一份卡片样式，不如把卡片拆成"只吃字段"的版本共用。
  *
+ * ## 按下反馈为什么不是涟漪
+ *
+ * `combinedClickable` 的默认涟漪会被 `clip(RoundedCornerShape(12.dp))` 裁成一块
+ * **半透明灰色圆角矩形**，正好盖住整张玻璃卡片 —— 玻璃质感全被那层灰罩洗掉了
+ * （底部导航栏是同一个问题，见 `GlassBottomNav` 里那段注释）。所以这里 `indication = null`，
+ * 按下反馈改成卡片**轻微缩到 98%**：有反馈、又没有那层灰。
+ *
  * @param accent 左侧强调条的底色，用 `CourseRepository.colorOfName(课名)` 取
+ * @param onClick 点击 → 打开详情；传 null 时卡片不可点
  */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -156,17 +177,34 @@ fun CourseCard(
     modifier: Modifier = Modifier,
     highlighted: Boolean = false,
     metaText: String? = null,
+    onClick: (() -> Unit)? = null,
     onLongClick: (() -> Unit)? = null,
 ) {
     val shape = RoundedCornerShape(12.dp)
+    val interactionSource = remember { MutableInteractionSource() }
+    val pressed by interactionSource.collectIsPressedAsState()
+    val pressScale by animateFloatAsState(
+        targetValue = if (pressed) PressedCardScale else 1f,
+        animationSpec = tween(durationMillis = 120),
+        label = "cardPressScale",
+    )
     Row(
         modifier = modifier
             .fillMaxWidth()
             .height(IntrinsicSize.Min)
+            // 缩放只在绘制阶段做（graphicsLayer 里读 pressScale）：
+            // 不触发重新布局，也不会把相邻卡片挤动
+            .graphicsLayer {
+                scaleX = pressScale
+                scaleY = pressScale
+            }
             .glassSurface(shape, highlighted = highlighted)
             .clip(shape)
             .combinedClickable(
-                onClick = {},
+                interactionSource = interactionSource,
+                indication = null,
+                enabled = onClick != null || onLongClick != null,
+                onClick = { onClick?.invoke() },
                 onLongClick = onLongClick,
             ),
     ) {
@@ -280,3 +318,9 @@ fun CampusButton(
         Text(text = text, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
     }
 }
+
+/**
+ * 课程卡片按下时的缩放（见 [CourseCard] 的注释：按下反馈用缩放，**不用涟漪**）。
+ * 0.98 足够让人感到"按到了"，又不会让卡片看起来在躲手指。
+ */
+private const val PressedCardScale = 0.98f

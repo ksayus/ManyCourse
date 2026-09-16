@@ -36,17 +36,17 @@ import com.tof.manycourse.data.CourseSync
 import com.tof.manycourse.data.LoginSettings
 import com.tof.manycourse.data.SessionStore
 import com.tof.manycourse.data.WeekScheduleStore
+import com.tof.manycourse.data.WeekdayLabels
 import com.tof.manycourse.data.coursesOfDate
 import com.tof.manycourse.data.dateOfCurrentWeek
 import com.tof.manycourse.data.nextCourseKey
+import com.tof.manycourse.data.weekdayLabel
 import com.tof.manycourse.ui.components.CampusButton
 import com.tof.manycourse.ui.components.CampusChip
 import com.tof.manycourse.ui.components.CourseCard
 import com.tof.manycourse.ui.theme.LocalGlassTokens
 import java.time.LocalDate
 import java.time.LocalTime
-
-private val WeekdayLabels = listOf("周一", "周二", "周三", "周四", "周五", "周六", "周日")
 
 /**
  * 课表页（标题就是「本周课表」）。
@@ -59,11 +59,18 @@ private val WeekdayLabels = listOf("周一", "周二", "周三", "周四", "周�
  * 为什么不做成"整个学期的课按星期几循环"：那样第 20 周的周一也会画上
  * 只在第 2-4 周上的军事理论，而且**会和日历页对不上** —— 日历页拿的是按周的真实数据。
  * 两页要显示同一天的课，就必须用同一个来源、同一套兜底规则。
+ *
+ * @param onAddCourse 点「添加课程」（参数 = 预选的星期几）
+ * @param onCourseClick 点某张课程卡片 → 由 Fragment 打开课程详情浮层。
+ *   参数是**那一天的全部课**（按节次排）：详情卡列的是"那天有什么课"，不是"点中的那一门"。
+ *   **浮层不在这里组合**：本页的内容区被页头和底栏夹在中间，浮层挂在这里的话
+ *   遮罩只能盖住中间那一段（页头/底栏还亮着），和「添加课程」的全屏浮层对不上。
  */
 @Composable
 fun ScheduleScreen(
     hazeState: HazeState,
     onAddCourse: (Int) -> Unit,
+    onCourseClick: (LocalDate, List<CourseEntry>) -> Unit,
 ) {
     val today = LocalDate.now()
     val todayWeekday = today.dayOfWeek.value // 1=周一
@@ -120,7 +127,7 @@ fun ScheduleScreen(
         WeekLabel()
 
         Text(
-            text = "${WeekdayLabels[selectedDay - 1]} · ${entries.size} 门课程",
+            text = "${weekdayLabel(selectedDay)} · ${entries.size} 门课程",
             fontSize = 16.sp,
             fontWeight = FontWeight.SemiBold,
             lineHeight = 22.sp,
@@ -133,8 +140,10 @@ fun ScheduleScreen(
             CourseCard(
                 course = entry,
                 highlighted = entry.key == highlightedKey,
-                metaText = "${WeekdayLabels[entry.weekday - 1]} ${entry.periodLabel}" +
+                metaText = "${weekdayLabel(entry.weekday)} ${entry.periodLabel}" +
                     entry.weeks.takeIf { it.isNotBlank() }?.let { " · $it" }.orEmpty(),
+                // 点击 → 详情浮层：列的是**这一天**的课（与上面这份列表同一份数据）
+                onClick = { onCourseClick(selectedDate, entries) },
                 // 教务系统的课删不掉（下次同步又会回来），只有本地课给长按删除
                 onLongClick = (entry as? CourseEntry.Local)?.let { local ->
                     { pendingDelete = local.course }

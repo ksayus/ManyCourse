@@ -2,6 +2,7 @@ package com.tof.manycourse
 
 import android.app.Application
 import com.tof.manycourse.data.LoginSettings
+import com.tof.manycourse.data.ProfileRepository
 import com.tof.manycourse.data.SessionStore
 import com.tof.manycourse.data.UiSettings
 
@@ -12,13 +13,18 @@ import com.tof.manycourse.data.UiSettings
  * **登录会话**（`SessionStore`）保证"上次登录过"的用户直接进主界面、不用再输密码。
  *
  * 顺序有讲究：`SessionStore` 会去改 `LoginSettings`（把恢复出来的学校同步进去），
- * 所以必须排在它后面。
+ * 所以必须排在它后面；**个人资料**（昵称/专业，按账号分开存）要等会话恢复完才知道
+ * 是哪个账号，所以绑定放在最后一步。
  */
 class ManyCourseApp : Application() {
     override fun onCreate() {
         super.onCreate()
         UiSettings.attach(this)
         LoginSettings.attach(this)
+        ProfileRepository.attach(this)
         SessionStore.attach(this)
+        // 会话恢复出来之后才知道"现在的资料属于谁"：把那个账号自己存过的昵称/专业读回来，
+        // 于是冷启动首帧「我的」页显示的就是用户改过的名字（而不是默认的"张同学"）
+        ProfileRepository.bindAccount(SessionStore.schoolId.value, SessionStore.account.value)
     }
 }

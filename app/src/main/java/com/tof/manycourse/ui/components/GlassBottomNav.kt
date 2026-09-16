@@ -5,6 +5,7 @@ import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -53,6 +54,9 @@ import com.tof.manycourse.ui.theme.LocalGlassTokens
  *   横屏时图标不会被侧边挖孔或圆角压住；**不含 IME**，键盘弹出时底栏不会跟着跳；
  * - 玻璃背景铺满到屏幕物理底边，但**底边与两侧不画描边**（圆角屏/曲面屏会裁切边缘），
  *   分隔线只画在与内容相接的顶边（[GlassEdge.Top]）。
+ *
+ * 点击**不带涟漪**（`indication = null`）：默认涟漪会被裁成一块灰色圆角矩形盖在玻璃上，
+ * 看起来就是"点底栏时出现一层灰罩"。选中反馈由胶囊底 + 图标缩放 + 颜色过渡承担。
  *
  * 性能要点：[activeIndex] 在组件内部读取（而不是由调用方作为参数传入）——
  * 否则读取发生在 Fragment 的组合作用域里，切一次 Tab 会让三个全屏 Fragment 全部重组。
@@ -117,7 +121,14 @@ fun GlassBottomNav(
                     .weight(1f)
                     .heightIn(min = 52.dp)
                     .clip(RoundedCornerShape(12.dp))
-                    .clickable { onSelect(index) },
+                    // indication = null：**不要涟漪**。
+                    // 默认涟漪会被上面这行 clip 裁成一块半透明灰色圆角矩形，盖住四分之一条
+                    // 底栏 —— 也就是"点了底栏就有一层灰罩"的那个 bug。玻璃底栏没有实体底色，
+                    // 那层灰只能被看成脏。选中反馈由下面的胶囊动画 + 缩放承担，足够了。
+                    .clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null,
+                    ) { onSelect(index) },
                 contentAlignment = Alignment.Center,
             ) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {

@@ -105,11 +105,15 @@ object SessionStore {
      *
      * 必须在 `startActivity(ManyCourseMain)` **之前**调用 ——
      * 主界面 onCreate 会立刻拿 [schoolId] / [account] 去同步数据。
+     *
+     * 同时把个人资料切到**这个账号自己存过的那一份**（[ProfileRepository.bindAccount]）：
+     * 换账号登录时「我的」页不能还留着上一个人的昵称。
      */
     fun onLogin(school: String, userAccount: String, localDebug: Boolean) {
         schoolId.value = school
         account.value = userAccount
         isLocalDebug.value = localDebug
+        ProfileRepository.bindAccount(school, userAccount)
         CourseSync.reset()
         persist()
     }

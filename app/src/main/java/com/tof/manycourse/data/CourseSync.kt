@@ -18,7 +18,7 @@ import com.tof.manycourse.gr_api.readableMessage
  *   ManyCourseMain.onCreate
  *        ↓ CourseSync.sync(schoolId, account)
  *   SchoolRegistry.apiOf(schoolId)     ← 按学校分发（唯一的加学校入口）
- *        ├─ fetchProfile()  →  ProfileRepository.nickname / major
+ *        ├─ fetchProfile()  →  ProfileRepository.applySchoolProfile()（用户改过的昵称优先）
  *        └─ fetchSchedule() →  CourseRepository.replaceAll()
  * ```
  *
@@ -102,10 +102,8 @@ object CourseSync {
             main {
                 profile.onSuccess { student ->
                     // ★ 需求：当前的账户名字自动写成学校系统中会显示的名字
-                    ProfileRepository.nickname.value = student.name
-                    student.subtitle.takeIf { it.isNotBlank() }?.let {
-                        ProfileRepository.major.value = it
-                    }
+                    //   但**用户自己在「编辑资料」里改过的名字优先** —— 否则改完下次冷启动就被打回去
+                    ProfileRepository.applySchoolProfile(student.name, student.subtitle)
                 }
 
                 // 学籍这一步就发现登录过期的话，不用再去拉课表了
@@ -150,11 +148,13 @@ object CourseSync {
      *
      * 课程也一并清空：它来自上一个账号的教务系统，留着就是数据串号。
      * 下次登录会由 [sync] 重新拉回来。
+     *
+     * 个人资料交给 [ProfileRepository.onLogout]：界面上清成"未登录"，
+     * **但那个账号自己存过的昵称/专业留在磁盘上**，下次用回这个账号还在（见该类的注释）。
      */
     fun clearOnLogout() {
         reset()
-        ProfileRepository.nickname.value = "未登录"
-        ProfileRepository.major.value = ""
+        ProfileRepository.onLogout()
         CourseRepository.clear()
         WeekScheduleStore.clearOnLogout()
     }

@@ -37,6 +37,9 @@ import com.tof.manycourse.ui.theme.LocalGlassTokens
 /**
  * 编辑资料对话框（玻璃浮层）：昵称（必填）+ 专业/年级（选填）。
  * 与添加课程一致：面板为静态高不透明度表面，进出场动画由 GlassOverlay 统一处理。
+ *
+ * 保存走 [ProfileRepository.setNickname] / [ProfileRepository.setMajor]：
+ * **落盘到当前登录账号**，并且从这一刻起教务系统同步回来的姓名不再覆盖它。
  */
 @Composable
 fun EditProfileDialog(
@@ -134,8 +137,10 @@ fun EditProfileDialog(
                         onClick = {
                             touched = true
                             if (nickname.isBlank()) return@CampusButton
-                            ProfileRepository.nickname.value = nickname.trim()
-                            if (major.isNotBlank()) ProfileRepository.major.value = major.trim()
+                            // 走仓库的 setter（而不是直接改状态）：它会**写进当前账号的存档**，
+                            // 下次冷启动 / 换回这个账号时改过的名字还在（见 ProfileRepository 注释）
+                            ProfileRepository.setNickname(nickname)
+                            ProfileRepository.setMajor(major)
                             onDismiss()
                         },
                     )

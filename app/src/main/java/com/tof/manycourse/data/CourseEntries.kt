@@ -2,6 +2,12 @@ package com.tof.manycourse.data
 
 import java.time.LocalDate
 
+/** 「周几」的中文标签（下标 0 = 周一）。课表页 Chip、添加课程、课程详情共用这一份 */
+val WeekdayLabels = listOf("周一", "周二", "周三", "周四", "周五", "周六", "周日")
+
+/** 星期几 → 中文标签；越界返回空串（宁可空着，也不要因为一个脏数据把整页崩掉）*/
+fun weekdayLabel(weekday: Int): String = WeekdayLabels.getOrElse(weekday - 1) { "" }
+
 /**
  * 某一天里的一门课：**要么来自教务系统的"按教学周"数据，要么来自本地课表**。
  *
@@ -29,6 +35,23 @@ sealed interface CourseEntry {
     /** 这节课几点开始（`H:MM`）*/
     val startTime: String
 
+    /** 课程名 —— 卡片/网格格子里的标题 */
+    val name: String
+
+    /** 地点（教务系统的课是「教室 + 校区」）*/
+    val room: String
+
+    /**
+     * 开始节次（第 1 节起）。
+     *
+     * 课程卡片列表用不上它（列表本来就按节次排好了），但**日历页的日程网格**要用它
+     * 把卡片摆到时间轴的第几行上，所以这里是两种来源的公共口径。
+     */
+    val startPeriod: Int
+
+    /** 连上几节：网格里这张卡片要跨几行 */
+    val periodCount: Int
+
     /** 教务系统"周次课表"接口给的那一课（只属于这一周）*/
     data class Week(val course: SchoolCourse) : CourseEntry {
         override val key: String get() = "week:${course.name}:${course.startPeriod}"
@@ -36,6 +59,10 @@ sealed interface CourseEntry {
         override val periodLabel: String get() = course.periodLabel
         override val weeks: String get() = course.weeks
         override val startTime: String get() = CourseRepository.periodTime(course.startPeriod)
+        override val name: String get() = course.name
+        override val room: String get() = course.fullRoom
+        override val startPeriod: Int get() = course.startPeriod
+        override val periodCount: Int get() = course.periodCount
     }
 
     /** 本地课表里的那一课（同步来的整学期课，或用户自己加的课）*/
@@ -45,6 +72,10 @@ sealed interface CourseEntry {
         override val periodLabel: String get() = course.periodLabel
         override val weeks: String get() = course.weeks
         override val startTime: String get() = course.startTime
+        override val name: String get() = course.name
+        override val room: String get() = course.room
+        override val startPeriod: Int get() = course.startPeriod
+        override val periodCount: Int get() = course.periodCount
     }
 }
 
@@ -84,6 +115,43 @@ fun coursesOfDate(date: LocalDate): List<CourseEntry>? {
         allowLocalFallback = date in naturalWeekOf(LocalDate.now()),
     )
 }
+
+/**
+ * ★ **「我的」页的「本周课程」门数**。
+ *
+ * 为什么不能用 `CourseRepository.courses.size`（旧实现）：
+ * 那里的 `courses` 是**教务系统拉回来的整学期课表**，而卡片上写的是"本周课程" ——
+ * 数字会比用户在本周课表上看到的课多出一大截（一门只上 2-4 周的课也被算进来，
+ * 而且拿不到"这一周真的会上哪些课"这个信息）。用户一眼就能看出对不上。
+ *
+ * 所以这里走**和课表页/日历页同一个取值函数**（[coursesOfDate]）：
+ * 含今天的那一个自然周里，七天各有多少门课，加起来就是本周课程数。
+ * 本地兜底只在这一周生效，所以这七天不会返回 null；真取不到就按 0 记，
+ * 宁可少算一门，也不要抛异常把整页"我的"打挂。
+ */
+fun currentWeekCourseCount(today: LocalDate = LocalDate.now()): Int {
+    // ClosedRange<LocalDate> 本身不可迭代，这里显式展开成周一到周日那七天
+    val week = naturalWeekOf(today)
+    val days = (0L..6L).map { week.start.plusDays(it) }
+    return countWeekCourses(days) { coursesOfDate(it) }
+}
+
+/** 「我的」页的「今日课程」门数 —— 同样与课表页/日历页同源 */
+fun todayCourseCount(today: LocalDate = LocalDate.now()): Int =
+    coursesOfDate(today)?.size ?: 0
+
+/**
+ * [currentWeekCourseCount] 的**纯逻辑部分**（不碰任何仓库/状态，可单测）。
+ *
+ * @param dates 要统计的日期（一般是含今天的那一个自然周）
+ * @param entriesOf 取某一天课程的函数；**返回 null 表示这一天没有可用数据**，
+ *   不计入门数（而不是当成"0 门"混进去 —— 展示上两者一样，但取不到数据时
+ *   "少算一天"和"那天确实没课"是两回事，别把前者说成后者）
+ */
+internal fun countWeekCourses(
+    dates: Iterable<LocalDate>,
+    entriesOf: (LocalDate) -> List<CourseEntry>?,
+): Int = dates.sumOf { entriesOf(it)?.size ?: 0 }
 
 /**
  * [coursesOfDate] 的**纯逻辑部分**（不碰任何仓库/状态，可单测）。

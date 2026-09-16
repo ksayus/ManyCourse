@@ -23,6 +23,7 @@ import dev.chrisbanes.haze.HazeState
 import dev.chrisbanes.haze.hazeSource
 import com.tof.manycourse.ui.EditProfileDialog
 import com.tof.manycourse.ui.ProfileScreen
+import com.tof.manycourse.ui.SettingsScreen
 import com.tof.manycourse.ui.components.GlassBottomNav
 import com.tof.manycourse.ui.components.GlassHeader
 import com.tof.manycourse.ui.components.LiquidGlassBackground
@@ -46,6 +47,7 @@ class SelfFragment : Fragment() {
             ManyCourseTheme {
                 val hazeState = remember { HazeState() }
                 var showEditProfile by remember { mutableStateOf(false) }
+                var showSettings by remember { mutableStateOf(false) }
                 // 仅当本页可见且在前台时驱动背景动画，隐藏页零逐帧开销
                 val backgroundAnimating = isTabForeground(TAB_INDEX)
 
@@ -63,7 +65,11 @@ class SelfFragment : Fragment() {
                                     WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal)
                                 )
                         ) {
-                            ProfileScreen(hazeState) { showEditProfile = true }
+                            ProfileScreen(
+                                hazeState = hazeState,
+                                onOpenSettings = { showSettings = true },
+                                onEditProfile = { showEditProfile = true },
+                            )
                         }
                         // 底栏在组件内部读取当前索引，避免切换 Tab 时三张全屏页面一起重组
                         GlassBottomNav(hazeState) { index ->
@@ -74,6 +80,11 @@ class SelfFragment : Fragment() {
                     EditProfileDialog(
                         visible = showEditProfile,
                         onDismiss = { showEditProfile = false },
+                    )
+                    // 设置页：独立全屏页（自带页头与返回键），同样常驻组合
+                    SettingsScreen(
+                        visible = showSettings,
+                        onDismiss = { showSettings = false },
                     )
                 }
             }

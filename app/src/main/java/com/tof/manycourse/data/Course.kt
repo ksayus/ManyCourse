@@ -1,7 +1,6 @@
 package com.tof.manycourse.data
 
 import androidx.compose.runtime.mutableStateListOf
-import androidx.compose.runtime.mutableStateOf
 import com.tof.manycourse.ui.theme.CourseDotColors
 import java.time.LocalDate
 import kotlin.math.abs
@@ -61,7 +60,54 @@ object CourseRepository {
 
     const val MAX_PERIOD = 10
 
+    /**
+     * 一节课多长（分钟）。
+     *
+     * 课表里**只有开始时刻**（[periodTimes]），没有下课时间 —— 所以"第 1 节 8:00~8:45"
+     * 里的 8:45 是按这个常量推出来的：相邻节次相差 55 分钟 = 45 分钟正课 + 10 分钟课间，
+     * 与 [periodTimes] 完全自洽（8:00→8:55→10:10 …）。
+     *
+     * 之所以敢推：这只用来画时间轴的刻度文案。**真正的"这节课几点结束"仍以教务系统为准**，
+     * 哪天接口给了下课时间，改这一个常量即可（见 `docs/UI使用文档.md` §2.2）。
+     */
+    const val PERIOD_MINUTES = 45
+
     fun periodTime(period: Int): String = periodTimes[period] ?: ""
+
+    /** 某一节的结束时刻（按 [PERIOD_MINUTES] 推算）；没有这一节则返回空串 */
+    fun periodEndTime(period: Int): String {
+        val start = parsePeriodTime(period) ?: return ""
+        return formatPeriodTime(start.plusMinutes(PERIOD_MINUTES.toLong()))
+    }
+
+    /** 时间轴上的刻度文案：`8:00~8:45`；节次越界或时刻解析不出时返回空串 */
+    fun periodRangeLabel(period: Int): String {
+        val start = periodTimes[period]
+        val end = periodEndTime(period)
+        return if (start.isNullOrBlank() || end.isBlank()) "" else "$start~$end"
+    }
+
+    /**
+     * 连上几节时的整段时间：`8:00~9:40`（第一节的开始 → 最后一节的结束）。
+     *
+     * 课程详情里的「上课时间」用它：课表只给了每节的开始时刻，
+     * 整段结束时刻按 [PERIOD_MINUTES] 推算（口径同 [periodRangeLabel]）。
+     */
+    fun periodRangeLabel(startPeriod: Int, periodCount: Int): String {
+        val start = periodTimes[startPeriod] ?: return ""
+        val lastPeriod = startPeriod + periodCount.coerceAtLeast(1) - 1
+        val end = periodEndTime(lastPeriod)
+        return if (end.isBlank()) "" else "$start~$end"
+    }
+
+    /** `8:00` → LocalTime；解析不出返回 null（脏数据不让页面崩） */
+    private fun parsePeriodTime(period: Int): java.time.LocalTime? = runCatching {
+        java.time.LocalTime.parse(periodTimes[period].orEmpty().padStart(5, '0'))
+    }.getOrNull()
+
+    /** LocalTime → `8:45`（**不补前导零**，与 [periodTimes] 的写法保持一致） */
+    private fun formatPeriodTime(time: java.time.LocalTime): String =
+        "${time.hour}:%02d".format(time.minute)
 
     private var nextId = 1L
 
@@ -147,22 +193,4 @@ object CourseRepository {
 
     /** 同上，但直接吃课程名 —— 教务系统按周拉回来的课（`SchoolCourse`）也要同一个颜色 */
     fun colorOfName(name: String) = CourseDotColors[abs(name.hashCode()) % CourseDotColors.size]
-
-    /** 本周课程总数（实时计算） */
-    val weekCourseCount: Int get() = courses.size
-
-    /** 今日课程数（实时计算） */
-    val todayCourseCount: Int get() = coursesOn(LocalDate.now().dayOfWeek.value).size
-}
-
-/**
- * 个人信息仓库：昵称等资料独立存放，与课程数据分离。
- *
- * 登录成功后 `CourseSync` 会用**学校系统里显示的姓名**覆写 [nickname]，
- * 用「专业 · 学院」覆写 [major]（需求：名字自动写成学校系统里显示的那个）。
- * 用户仍可在「我的 → 编辑资料」里改回来。
- */
-object ProfileRepository {
-    var nickname = mutableStateOf("张同学")
-    var major = mutableStateOf("计算机科学 · 2022级")
 }

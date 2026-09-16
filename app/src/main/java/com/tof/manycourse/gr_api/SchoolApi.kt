@@ -93,7 +93,8 @@ interface SchoolApi {
      * 拉这所学校系统里的学生信息（**姓名**在这里面）。
      *
      * 需求的「当前账户的名字自动写入学校系统中会显示的名字」就是靠它：
-     * 登录成功后拉一次，把 [StudentProfile.name] 写进 `ProfileRepository.nickname`。
+     * 登录成功后拉一次，把 [StudentProfile.name] 交给
+     * `ProfileRepository.applySchoolProfile`（**用户自己改过的昵称不会被覆盖**）。
      */
     fun fetchProfile(account: String, callback: (Result<StudentProfile>) -> Unit) {
         callback(Result.failure(UnsupportedOperationException("「${school.name}」还没接入学生信息接口")))

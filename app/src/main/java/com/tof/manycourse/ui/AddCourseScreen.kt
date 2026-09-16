@@ -31,13 +31,13 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.tof.manycourse.data.CourseRepository
+import com.tof.manycourse.data.WeekdayLabels
+import com.tof.manycourse.data.weekdayLabel
 import com.tof.manycourse.ui.components.CampusButton
 import com.tof.manycourse.ui.components.CampusChip
 import com.tof.manycourse.ui.components.GlassOverlay
 import com.tof.manycourse.ui.components.GlassPanel
 import com.tof.manycourse.ui.theme.LocalGlassTokens
-
-private val WeekdayLabels = listOf("周一", "周二", "周三", "周四", "周五", "周六", "周日")
 
 /**
  * 添加课程（本地数据）：全屏玻璃表单浮层。
@@ -207,7 +207,7 @@ fun AddCourseScreen(
                 // 实时计算预览：周几 · 第几节 · 几点上课
                 val endPeriod = (startPeriod + periodCount - 1).coerceAtMost(CourseRepository.MAX_PERIOD)
                 Text(
-                    text = "${WeekdayLabels[weekday - 1]} · 第${startPeriod}-${endPeriod}节 · ${CourseRepository.periodTime(startPeriod)} 上课",
+                    text = "${weekdayLabel(weekday)} · 第${startPeriod}-${endPeriod}节 · ${CourseRepository.periodTime(startPeriod)} 上课",
                     fontSize = 12.sp,
                     color = accent,
                 )
