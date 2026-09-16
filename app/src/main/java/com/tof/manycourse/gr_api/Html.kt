@@ -14,9 +14,20 @@ package com.tof.manycourse.gr_api
 
 private val ATTR_REGEX = Regex("""([A-Za-z_:][-A-Za-z0-9_:.]*)\s*=\s*(?:"([^"]*)"|'([^']*)')""")
 
-/** 解析一个标签里的全部属性（`<input name="a" value='b'>` → `{name=a, value=b}`） */
+/**
+ * **没有值**的属性名（HTML 里的布尔属性）。
+ *
+ * 为什么必须认：`<option value='202601' selected>` —— 广东工业大学课表页的学期下拉框
+ * **就是这么写的**（`selected` 后面没有任何 `=`）。只认 `name="value"` 的话，
+ * `selected` 会被整个丢掉，于是 [htmlSelectedOption] 永远返回 null ——
+ * 表现成"读不到当前学年学期"，而且**不报任何错**。
+ */
+private val BARE_ATTR_REGEX = Regex("""(?:^|\s)([A-Za-z_:][-A-Za-z0-9_:.]*)(?=[\s>/]|$)""")
+
+/** 解析一个标签里的全部属性（`<input name="a" value='b' required>` → `{name=a, value=b, required=}`） */
 private fun parseAttributes(tag: String): Map<String, String> {
     val out = LinkedHashMap<String, String>()
+    val remaining = StringBuilder(tag)
     ATTR_REGEX.findAll(tag).forEach { m ->
         // 双引号捕获组是 2，单引号是 3
         out[m.groupValues[1].lowercase()] = if (m.groupValues[2].isNotEmpty() || m.groupValues[3].isEmpty()) {
@@ -24,6 +35,12 @@ private fun parseAttributes(tag: String): Map<String, String> {
         } else {
             m.groupValues[3]
         }
+        // 把已识别的 `name="value"` 抹成空格，剩下的才是布尔属性 ——
+        // 不抹的话，`value="selected"` 里的 "selected" 会被当成一个属性名
+        for (i in m.range) remaining.setCharAt(i, ' ')
+    }
+    BARE_ATTR_REGEX.findAll(remaining.toString()).forEach { m ->
+        out.putIfAbsent(m.groupValues[1].lowercase(), "")
     }
     return out
 }
@@ -98,8 +115,12 @@ internal fun String.htmlSelectOptions(selectId: String): List<Pair<String, Strin
 /**
  * `<select>` 上带 `selected` 的那个 option 的 value。
  *
- * 金城学院的课表查询页靠它给出**当前学年学期**（如 `2026-2027,1`）——
+ * 金城学院的课表查询页靠它给出**当前学年学期**（如 `2026-2027,1`）、
+ * 广东工业大学的课表页靠它给出 `xnxqdm`（如 `202601`）——
  * 直接用页面给的默认值，比在客户端猜"现在是第几学期"可靠得多。
+ *
+ * `selected` 的两种写法都认：`selected="selected"` 和**光秃秃的 `selected`**
+ * （广工那页就是后者，见 [BARE_ATTR_REGEX]）。
  */
 internal fun String.htmlSelectedOption(selectId: String): String? {
     val escaped = Regex.escape(selectId)

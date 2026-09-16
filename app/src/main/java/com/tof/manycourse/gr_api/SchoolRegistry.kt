@@ -1,6 +1,7 @@
 package com.tof.manycourse.gr_api
 
 import com.tof.manycourse.data.School
+import com.tof.manycourse.gr_api.schools.GdutApi
 import com.tof.manycourse.gr_api.schools.GzusApi
 import com.tof.manycourse.gr_api.schools.NhjcxyApi
 
@@ -31,6 +32,7 @@ object SchoolRegistry {
     private val apis: List<SchoolApi> = listOf(
         GzusApi(),
         NhjcxyApi(),
+        GdutApi(),
     )
 
     /** 给 UI 用的纯数据清单（登录页下拉直接遍历它） */

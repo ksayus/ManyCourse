@@ -144,9 +144,9 @@ class CourseDetailTest {
 
     @Test
     fun classTimeIsTheSpanPlusWhichPeriods() {
-        // 上课时间 = 节次 + 起止时刻（连上两节就是「第1-2节 · 8:00~9:40」）
-        assertEquals("第1-2节 · 8:00~9:40", valuesOf(courseDetailOf(weekEntry()))["上课时间"])
-        assertEquals("第5-6节 · 14:00~15:40", valuesOf(courseDetailOf(localEntry()))["上课时间"])
+        // 上课时间 = 节次 + 起止时刻（连上两节就是一个两节块：第1-2节 = 9:00~10:20）
+        assertEquals("第1-2节 · 9:00~10:20", valuesOf(courseDetailOf(weekEntry()))["上课时间"])
+        assertEquals("第5-6节 · 12:30~13:50", valuesOf(courseDetailOf(localEntry()))["上课时间"])
     }
 
     @Test

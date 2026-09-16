@@ -51,62 +51,119 @@ data class Course(
 /** 课程仓库：内存数据 + Compose 可观察状态，增删后所有页面实时刷新 */
 object CourseRepository {
 
-    /** 各节次上课时间（可改） */
-    private val periodTimes = mapOf(
-        1 to "8:00", 2 to "8:55", 3 to "10:10", 4 to "11:05",
-        5 to "14:00", 6 to "14:55", 7 to "16:10", 8 to "17:05",
-        9 to "19:00", 10 to "19:55",
+    /**
+     * **每一节课的时刻表 = 8 个"两节块"**（第 1-2 节、第 3-4 节 … 第 15-16 节），共 16 节。
+     *
+     * ```
+     * 1-2   9:00-10:20      9-10   15:30-16:50
+     * 3-4  10:40-12:00     11-12   17:00-18:20
+     * 5-6  12:30-13:50     13-14   19:00-20:20
+     * 7-8  14:00-15:20     15-16   20:30-21:50
+     * ```
+     *
+     * 为什么按"块"存而不是按"节"存：课表本来就是两节连排（连上 80 分钟、块间休息 10~40 分钟），
+     * 周视图是**一行两节**、时间轴也按块写；把块起止写死一张表，
+     * 块内的两节（各 [PERIOD_MINUTES] 分钟）由它推出来，就不会出现"表和展示对不上"。
+     * 单测 `ScheduleGridSlotsTest` 把这 8 行逐条钉住。
+     */
+    private val blockRanges = listOf(
+        "9:00" to "10:20",
+        "10:40" to "12:00",
+        "12:30" to "13:50",
+        "14:00" to "15:20",
+        "15:30" to "16:50",
+        "17:00" to "18:20",
+        "19:00" to "20:20",
+        "20:30" to "21:50",
     )
 
-    const val MAX_PERIOD = 10
+    /** 一个块里连排两节 */
+    const val PERIODS_PER_BLOCK = 2
 
     /**
-     * 一节课多长（分钟）。
+     * 一节课多长（分钟）：块长 80 分钟 ÷ 2 = **40**。
      *
-     * 课表里**只有开始时刻**（[periodTimes]），没有下课时间 —— 所以"第 1 节 8:00~8:45"
-     * 里的 8:45 是按这个常量推出来的：相邻节次相差 55 分钟 = 45 分钟正课 + 10 分钟课间，
-     * 与 [periodTimes] 完全自洽（8:00→8:55→10:10 …）。
-     *
-     * 之所以敢推：这只用来画时间轴的刻度文案。**真正的"这节课几点结束"仍以教务系统为准**，
-     * 哪天接口给了下课时间，改这一个常量即可（见 `docs/UI使用文档.md` §2.2）。
+     * 用它把"块起点"推成两节的开始/结束时刻（`9:00~9:40`、`9:40~10:20`），
+     * 也用来判断"现在正在上哪一节"。与 [blockRanges] 自洽由单测守着。
      */
-    const val PERIOD_MINUTES = 45
+    const val PERIOD_MINUTES = 40
 
-    fun periodTime(period: Int): String = periodTimes[period] ?: ""
+    /** 最大节次 = 块数 × 每块两节 = 16 */
+    val MAX_PERIOD: Int = blockRanges.size * PERIODS_PER_BLOCK
+
+    /** 第 [period] 节的开始时刻；**越界的节次返回空串**（宁可空着，也不要编一个时刻出来） */
+    fun periodTime(period: Int): String {
+        if (period !in 1..MAX_PERIOD) return ""
+        val blockStart = blockRanges[blockIndexOf(period)].first
+        // 奇数节就是块的开头，偶数节是块内第二节
+        return if (period % PERIODS_PER_BLOCK == 1) {
+            blockStart
+        } else {
+            parseTime(blockStart)?.let { formatTime(it.plusMinutes(PERIOD_MINUTES.toLong())) }.orEmpty()
+        }
+    }
 
     /** 某一节的结束时刻（按 [PERIOD_MINUTES] 推算）；没有这一节则返回空串 */
     fun periodEndTime(period: Int): String {
-        val start = parsePeriodTime(period) ?: return ""
-        return formatPeriodTime(start.plusMinutes(PERIOD_MINUTES.toLong()))
+        val start = parseTime(periodTime(period)) ?: return ""
+        return formatTime(start.plusMinutes(PERIOD_MINUTES.toLong()))
     }
 
-    /** 时间轴上的刻度文案：`8:00~8:45`；节次越界或时刻解析不出时返回空串 */
+    /** 某一节自己的刻度文案：`9:00~9:40`；节次越界或时刻解析不出时返回空串 */
     fun periodRangeLabel(period: Int): String {
-        val start = periodTimes[period]
+        val start = periodTime(period)
         val end = periodEndTime(period)
-        return if (start.isNullOrBlank() || end.isBlank()) "" else "$start~$end"
+        return if (start.isBlank() || end.isBlank()) "" else "$start~$end"
     }
 
     /**
-     * 连上几节时的整段时间：`8:00~9:40`（第一节的开始 → 最后一节的结束）。
+     * 连上几节时的整段时间：`9:00~10:20`（第一节开始 → 最后一节结束）。
      *
-     * 课程详情里的「上课时间」用它：课表只给了每节的开始时刻，
-     * 整段结束时刻按 [PERIOD_MINUTES] 推算（口径同 [periodRangeLabel]）。
+     * 课程详情的「上课时间」用它。
      */
     fun periodRangeLabel(startPeriod: Int, periodCount: Int): String {
-        val start = periodTimes[startPeriod] ?: return ""
+        val start = periodTime(startPeriod)
         val lastPeriod = startPeriod + periodCount.coerceAtLeast(1) - 1
         val end = periodEndTime(lastPeriod)
-        return if (end.isBlank()) "" else "$start~$end"
+        return if (start.isBlank() || end.isBlank()) "" else "$start~$end"
     }
 
-    /** `8:00` → LocalTime；解析不出返回 null（脏数据不让页面崩） */
-    private fun parsePeriodTime(period: Int): java.time.LocalTime? = runCatching {
-        java.time.LocalTime.parse(periodTimes[period].orEmpty().padStart(5, '0'))
+    /**
+     * **某个块的区间文案**（周视图时间轴每一行用）：`9:00~10:20`。
+     *
+     * @param blockIndex 0 起的块序号（0 = 第 1-2 节）
+     */
+    fun blockRangeLabel(blockIndex: Int): String =
+        blockRanges.getOrNull(blockIndex)?.let { (start, end) -> "$start~$end" }.orEmpty()
+
+    /**
+     * 某个块的**开始时刻**（周视图时间轴的第一行，如 `9:00`）；越界返回空串。
+     *
+     * 时间轴上的时刻刻意分两行写（开始在上面、结束在下面），而不是
+     * [blockRangeLabel] 那种 `9:00~10:20` 的区间写法：七列平分屏幕后左轴只有 40dp 上下，
+     * 区间写法会被省略号截断（"时间显示不全"）。拆开以后每行都短，两行都完整。
+     */
+    fun blockStartTime(blockIndex: Int): String =
+        blockRanges.getOrNull(blockIndex)?.first.orEmpty()
+
+    /** 某个块的**结束时刻**（周视图时间轴的最后一行，如 `10:20`）；越界返回空串 */
+    fun blockEndTime(blockIndex: Int): String =
+        blockRanges.getOrNull(blockIndex)?.second.orEmpty()
+
+    /** 块数（= 周视图的行数上限）：16 节 → 8 行 */
+    val BLOCK_COUNT: Int get() = blockRanges.size
+
+    /** 第 [period] 节落在第几个块（0 起）；越界则夹到最近的块 */
+    fun blockIndexOf(period: Int): Int =
+        ((period.coerceAtLeast(1) - 1) / PERIODS_PER_BLOCK).coerceAtMost(blockRanges.lastIndex)
+
+    /** `9:00` → LocalTime；解析不出返回 null（脏数据不让页面崩） */
+    private fun parseTime(text: String): java.time.LocalTime? = runCatching {
+        java.time.LocalTime.parse(text.padStart(5, '0'))
     }.getOrNull()
 
-    /** LocalTime → `8:45`（**不补前导零**，与 [periodTimes] 的写法保持一致） */
-    private fun formatPeriodTime(time: java.time.LocalTime): String =
+    /** LocalTime → `9:40`（**不补前导零**，与 [blockRanges] 的写法保持一致） */
+    private fun formatTime(time: java.time.LocalTime): String =
         "${time.hour}:%02d".format(time.minute)
 
     private var nextId = 1L

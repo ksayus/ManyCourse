@@ -22,7 +22,6 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -126,30 +125,40 @@ fun CalendarScreen(
     // **和课表页是同一个函数** —— 两页对不上就是从这里开始的，所以只留一个实现。
     val entries = coursesOfDate(selected)
     val selectedWeek = WeekScheduleStore.weekOf(selected)
+    // 月历布局的滚动位置：状态提在这里，切布局来回时不至于把位置丢掉
+    val scrollState = rememberScrollState()
 
     Column(
         Modifier
             .fillMaxSize()
-            .verticalScroll(rememberScrollState())
-            .padding(horizontal = 16.dp, vertical = 8.dp)
+            // ★ 周视图**整屏不滚动**：内容按"这一屏剩多少高"自适应（见 CalendarGridLayout），
+            //   所以"看完这一周的七天"永远不用上下滑。
+            //   月历视图照旧整页滚动 —— 它下面是"当日课程"列表，长度本来就不定
+            .then(if (gridLayout) Modifier else Modifier.verticalScroll(scrollState))
+            // 周视图的外边距比页面默认的 16dp 小得多：七列等宽，边距每让出 1dp、
+            // 每列就宽 1/7dp —— 卡片本来就窄，这点宽度值得省
+            .padding(
+                horizontal = if (gridLayout) 8.dp else 16.dp,
+                vertical = if (gridLayout) 6.dp else 8.dp,
+            )
     ) {
         if (gridLayout) {
+            // weight(1f)：这一屏剩下的高度**全给周视图**（它内部再按行数分给每一行）。
+            // 高度有界，是 GridBody 能"量出还剩多少高"的前提
             CalendarGridLayout(
                 weekStart = weekStart,
                 selected = selected,
                 today = today,
-                // 教学周列表 = 周次滑块的刻度（服务端给的，不在客户端猜开学日期）
+                // 教学周列表 = 周次滑块的刻度（服务端给的，不在客户端猜开学日期）；
+                // 为空时滑块整行不画，左右滑动按自然周翻（见 CalendarGridLayout 的注释）
                 weeks = WeekScheduleStore.weeks,
                 onSelect = { selected = it },
-                // 拖动滑块换周：保留"选中了星期几"，于是汇总条上的日期仍停在同一列
-                onWeekSelected = { week ->
-                    selected = week.start.plusDays((selected.dayOfWeek.value - 1).toLong())
-                },
                 onAddCourse = onAddCourse,
                 onCourseClick = onCourseClick,
+                modifier = Modifier.weight(1f),
             )
 
-            Spacer(Modifier.height(8.dp))
+            Spacer(Modifier.height(4.dp))
 
             // 数据来源说明：两种布局都要有 —— 网格里空着的地方到底是"没课"还是"没数据"，
             // 只有这一行讲得清
@@ -157,6 +166,8 @@ fun CalendarScreen(
                 schoolId = SessionStore.schoolId.value,
                 fromWeekApi = WeekScheduleStore.coursesOn(selected) != null,
             )
+
+            Spacer(Modifier.height(4.dp))
         } else {
             MonthCalendarCard(
                 month = month,
@@ -180,9 +191,9 @@ fun CalendarScreen(
             Spacer(Modifier.height(8.dp))
 
             DayCourseList(entries = entries, selected = selected, onCourseClick = onCourseClick)
-        }
 
-        Spacer(Modifier.height(24.dp))
+            Spacer(Modifier.height(24.dp))
+        }
     }
 }
 
@@ -459,6 +470,10 @@ private fun EmptyDayCard(text: String = "当日无课") {
  *    这条不写出来，用户只会觉得"日历坏了"。
  *
  * @param fromWeekApi 这一天的课是不是来自教务系统的"按周"数据（否则就是本地课表兜底）
+ *
+ * ★ 右侧的动作（重新登录 / 重试）刻意用**链接式文字**而不是 `TextButton`：
+ * `TextButton` 自带 40dp 的最小高度，会把这一条提示撑到 48dp —— 那是"整周不用滚动"
+ * 预算里最贵的一行（真机实测：48dp → 24dp）。样式与汇总条的「+ 添加」一致。
  */
 @Composable
 private fun WeekSourceHint(schoolId: String?, fromWeekApi: Boolean) {
@@ -519,9 +534,16 @@ private fun WeekSourceHint(schoolId: String?, fromWeekApi: Boolean) {
             modifier = Modifier.weight(1f),
         )
         action?.let { (label, onClick) ->
-            TextButton(onClick = onClick) {
-                Text(label, fontSize = 12.sp, color = tokens.accent)
-            }
+            Text(
+                text = label,
+                fontSize = 12.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = tokens.accent,
+                modifier = Modifier
+                    .clip(RoundedCornerShape(8.dp))
+                    .clickable(onClick = onClick)
+                    .padding(horizontal = 8.dp, vertical = 4.dp),
+            )
         }
     }
 }

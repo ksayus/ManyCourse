@@ -15,6 +15,7 @@ import com.tof.manycourse.data.SchoolWeek
  * | 学校 | 实现了吗 | 为什么 |
  * |---|---|---|
  * | 广州软件学院 | ✅ | 有「周次课表」页（`N2154`），一次给一周，**还带着每一周的起止日期** |
+ * | 广东工业大学 | ✅ | 有 `xsgrkbcx!getKbRq.action?xnxqdm=…&zc=…`：一次给一周的课，响应里第二个数组就是那一周周一~周日的真实日期 |
  * | 金城学院 | ❌ | 它只有"**按班级查一张整学期表**"，拿不到"某一周有哪些课" —— 实现了也填不满日历，只是白搭请求。**不要顺手给它加**（日历页对它只兜底本周） |
  *
  * 这条边界由 `SchoolRegistryTest.onlySchoolsWithPerWeekQueries_implementWeekScheduleApi`

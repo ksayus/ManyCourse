@@ -62,11 +62,17 @@ class SchoolRegistryTest {
 
     @Test
     fun preRegisteredSchools_arePresentWithTheirRealBaseUrls() {
-        // 这两所是预写好的，删掉/改 id 会让老用户"上次选的学校"失效
+        // 这几所是预写好的，删掉/改 id 会让老用户"上次选的学校"失效
         assertEquals("广州软件学院", SchoolRegistry.find("gzus")?.name)
         assertEquals("https://jwxt.gzus.edu.cn", SchoolRegistry.find("gzus")?.baseUrl)
         assertEquals("南京航空航天大学金城学院", SchoolRegistry.find("nhjcxy")?.name)
         assertEquals("https://jcjx.nhjcxy.edu.cn", SchoolRegistry.find("nhjcxy")?.baseUrl)
+        assertEquals("广东工业大学", SchoolRegistry.find("gdut")?.name)
+        assertEquals(
+            "广工的课表在 jxfw（教学管理系统），统一认证在另一个 host（authserver.gdut.edu.cn）",
+            "https://jxfw.gdut.edu.cn",
+            SchoolRegistry.find("gdut")?.baseUrl,
+        )
     }
 
     @Test
@@ -89,6 +95,18 @@ class SchoolRegistryTest {
     }
 
     @Test
+    fun gdut_isReadyToLogin() {
+        // 广工已按"金智统一身份认证（authserver）+ jxfw 课表接口"接好：
+        // 登录页隐藏域、密码 AES 加密算法、课表接口（xsAllKbList / getKbRq）
+        // 全部出自抓包与页面 JS 核对，并有逐字节回归测试。
+        // 详见 GdutApi 与 AuthserverAesCipher 的类注释。
+        assertTrue(
+            "广东工业大学的登录协议已实测打通（统一认证 + xsgrkbcx 课表），configured 应为 true",
+            SchoolRegistry.apiOf("gdut")!!.configured,
+        )
+    }
+
+    @Test
     fun everySchoolDeclaresItsLoginMechanism() {
         // 加学校时容易只填 school 忘了填登录参数。这里只能检查"最低限度的自洽"：
         // configured = true 的学校，system 里必须写清楚它是什么系统，
@@ -107,6 +125,8 @@ class SchoolRegistryTest {
      * 「按教学周查课表」能力的**归属边界**（日历页的真实日期靠它）。
      *
      * - 广软有 `N2154` 周次课表接口（一次给一周，还带每一周的起止日期），所以实现了它；
+     * - 广工也有（`xsgrkbcx!getKbRq.action?xnxqdm=…&zc=…` 一次给一周的课，
+     *   响应里第二个数组就是那一周周一~周日的真实日期），所以也实现了它；
      * - 金城学院**没有**这种能力 —— 它的课表是"按班级查一张整学期表"，
      *   拿不到"某一周有哪些课"，所以**不要**给它实现 [WeekScheduleApi]：
      *   实现了也只会拉到本周的数据，日历照样填不满，白搭一次请求。
@@ -120,6 +140,10 @@ class SchoolRegistryTest {
         assertTrue(
             "广软有周次课表接口（N2154），日历页要靠它拿真实日期",
             SchoolRegistry.apiOf("gzus") is WeekScheduleApi,
+        )
+        assertTrue(
+            "广工有 getKbRq（一次给一周的课 + 那一周的日期），日历页要靠它拿真实日期",
+            SchoolRegistry.apiOf("gdut") is WeekScheduleApi,
         )
         assertFalse(
             "金城学院拿不到「除了本周以外」的课表，不该实现 WeekScheduleApi" +
