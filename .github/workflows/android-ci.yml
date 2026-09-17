@@ -1,0 +1,300 @@
+name: Android CI/CD
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  三个 Job：
+#    build   推分支 / PR      → 跑全部单测 + 出 debug 与未签名 release 包（artifact）
+#    release 推 v* 标签       → Secrets 签名出正式包 → 自动发 GitHub Release（附 APK）
+#    pages   推默认分支       → 部署 index.html 到 GitHub Pages（在线下载页）
+#
+#  设计上的几条硬要求：
+#    - 没有签名 Secrets 也能跑：跳过签名，产出未签名包，绝不因为缺密钥而失败；
+#    - 密钥只作为临时文件存在，构建完（无论成败）立刻删除；
+#    - 每次构建的 versionCode 唯一（用 run number），避免"已安装更高版本"装不上；
+#    - 缓存 ~/.gradle，命中时构建从数分钟降到一分钟级。
+# ─────────────────────────────────────────────────────────────────────────────
+
+on:
+  push:
+    branches: [master, main]
+    tags: ['v*']
+  pull_request:
+    branches: [master, main]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: '要构建的标签（留空 = 当前分支，不发布 Release）'
+        required: false
+        type: string
+
+# 同一分支的重复推送取消上一次未完成的运行；标签发布不取消（发布不能半途而废）
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+
+permissions:
+  contents: read
+
+env:
+  # Gradle 自身的行为：控制台更干净、内存更稳
+  GRADLE_OPTS: '-Dorg.gradle.jvmargs=-Xmx3072m -Dfile.encoding=UTF-8'
+  GRADLE_ARGS: '--no-daemon --stacktrace --console=plain'
+
+jobs:
+  # ══════════════════════════════════════════════════════════════════════════
+  # 1) 持续集成：测试 + 出包
+  # ══════════════════════════════════════════════════════════════════════════
+  build:
+    name: Build & Test
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # AGP 9.x 需要 JDK 17+；这里固定 21（本项目在 21 / 25 上都验证过）
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Set up Gradle (with cache)
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      # 补装 AGP 声明的平台与构建工具（compileSdk 37 / build-tools 36）。
+      # runner 镜像通常已经带了，这里只是兜底：已装过的 sdkmanager 会秒退。
+      - name: Install required SDK packages
+        run: sdkmanager --install 'platform-tools' 'platforms;android-37' 'build-tools;36.0.0'
+
+      - name: Show toolchain versions
+        run: |
+          java -version
+          ./gradlew --version
+
+      - name: Grant execute permission for gradlew
+        run: chmod +x gradlew
+
+      # ── 单测（JVM）：解析器 / 加密 / 选校区 / 节次表 / 会话存档 ──────────────
+      - name: Run unit tests
+        run: ./gradlew :app:testDebugUnitTest $GRADLE_ARGS
+
+      # ── 出包：debug（可直接安装）+ release（无密钥时为未签名包） ─────────────
+      - name: Assemble APKs
+        run: ./gradlew :app:assembleDebug :app:assembleRelease $GRADLE_ARGS -PversionCode=${{ github.run_number }}
+
+      - name: Collect APKs
+        run: |
+          mkdir -p artifacts
+          # 名字带上版本与提交号，下载下来一眼知道是哪个包
+          stamp="${{ github.run_number }}-${GITHUB_SHA::7}"
+          cp app/build/outputs/apk/debug/app-debug.apk "artifacts/ManyCourse-debug-${stamp}.apk"
+          # release 目录里可能是 app-release.apk（已签名）或 app-release-unsigned.apk
+          find app/build/outputs/apk/release -maxdepth 1 -name '*.apk' \
+            -exec cp {} "artifacts/ManyCourse-release-${stamp}.apk" \;
+          ls -lh artifacts
+
+      - name: Upload APKs
+        uses: actions/upload-artifact@v4
+        with:
+          name: apk-${{ github.run_number }}
+          path: artifacts/*.apk
+          if-no-files-found: error
+          retention-days: 14
+
+      # 测试报告失败也要看得到，所以用 always()
+      - name: Upload test report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-report-${{ github.run_number }}
+          path: |
+            app/build/reports/tests/
+            app/build/test-results/
+          if-no-files-found: ignore
+          retention-days: 14
+
+  # ══════════════════════════════════════════════════════════════════════════
+  # 2) 持续交付：签名 + 发 Release
+  # ══════════════════════════════════════════════════════════════════════════
+  release:
+    name: Sign & Release APK
+    # 只对 v* 标签（或手动指定标签）发版；普通 push 不惊动它
+    if: startsWith(github.ref, 'refs/tags/v') || inputs.tag != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    permissions:
+      contents: write # 创建 Release 需要
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Set up Gradle (with cache)
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install required SDK packages
+        run: sdkmanager --install 'platform-tools' 'platforms;android-37' 'build-tools;36.0.0'
+
+      - name: Grant execute permission for gradlew
+        run: chmod +x gradlew
+
+      # ── 签名准备：把 Base64 密钥还原成文件 + 生成 Gradle 属性 ────────────────
+      # 没配 Secrets 时这一步直接跳过 → 后面产出未签名包，不会让整个流程失败
+      - name: Prepare signing key
+        id: signing
+        env:
+          KEY_STORE_BASE64: ${{ secrets.SIGNING_KEY_STORE_BASE64 }}
+          STORE_PASSWORD: ${{ secrets.SIGNING_STORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.SIGNING_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.SIGNING_KEY_PASSWORD }}
+        run: |
+          if [ -z "$KEY_STORE_BASE64" ]; then
+            echo "⚠️  未配置 SIGNING_KEY_STORE_BASE64，跳过签名（只出未签名包）"
+            echo "signed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "$KEY_STORE_BASE64" | base64 --decode > release.p12
+          # 密钥信息写进 GRADLE_USER_HOME 下的 gradle.properties ——
+          # Gradle 会自动加载这个文件，签名配置直接就能读到（不用改命令行参数）
+          mkdir -p "$HOME/.gradle"
+          {
+            echo "manycourse.storeFile=$GITHUB_WORKSPACE/release.p12"
+            echo "manycourse.storePassword=$STORE_PASSWORD"
+            echo "manycourse.keyAlias=$KEY_ALIAS"
+            echo "manycourse.keyPassword=$KEY_PASSWORD"
+          } >> "$HOME/.gradle/gradle.properties"
+          echo "signed=true" >> "$GITHUB_OUTPUT"
+          echo "✅ 签名密钥已就绪"
+
+      - name: Resolve version
+        id: version
+        run: |
+          # tag v1.2.3 → versionName 1.2.3；手动触发没给 tag 就用 run number 兜底
+          ref="${{ inputs.tag || github.ref_name }}"
+          case "$ref" in
+            v*) version="${ref#v}" ;;
+            *)  version="0.0.${{ github.run_number }}" ;;
+          esac
+          echo "name=$version" >> "$GITHUB_OUTPUT"
+          echo "versionName=$version"
+
+      # 签名信息通过 ~/.gradle/gradle.properties 传给构建（app/build.gradle.kts 里从
+      # `manycourse.*` 这几个 Gradle 属性读）；没配 Secrets 时这个文件不存在，
+      # 构建照样成功，只是产出 app-release-unsigned.apk。
+      - name: Build release APK
+        run: ./gradlew :app:assembleRelease $GRADLE_ARGS \
+          -PversionName='${{ steps.version.outputs.name }}' \
+          -PversionCode=${{ github.run_number }}
+
+      - name: Verify the APK
+        run: |
+          set -euo pipefail
+          apk=$(find app/build/outputs/apk/release -maxdepth 1 -name '*.apk' | head -n1 || true)
+          if [ -z "$apk" ]; then
+            echo "❌ 没有产出 release APK"; ls -R app/build/outputs/apk; exit 1
+          fi
+          echo "APK: $apk"
+          ls -lh "$apk"
+          # 顺手把 SHA-256 写出来，附到 Release 说明里方便用户核对
+          sha256sum "$apk" | tee apk.sha256
+          # 已签名的包能被 apksigner 读出签名证书；未签名包这里会返回非 0（不算错误）
+          "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --print-certs "$apk" \
+            || echo "⚠️  未签名包（没有配置签名 Secrets）"
+
+      - name: Rename APK for release
+        run: |
+          set -euo pipefail
+          apk=$(find app/build/outputs/apk/release -maxdepth 1 -name '*.apk' | head -n1)
+          cp "$apk" "ManyCourse-${{ steps.version.outputs.name }}.apk"
+          ls -lh ManyCourse-*.apk
+
+      # 无论成败都要删掉临时密钥（密钥文件是明文落盘的，不能留在 runner 上）
+      - name: Clean up signing key
+        if: always()
+        run: |
+          rm -f release.p12
+          rm -f "$HOME/.gradle/gradle.properties"
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ inputs.tag || github.ref_name }}
+          name: ManyCourse ${{ steps.version.outputs.name }}
+          generate_release_notes: true
+          append_body: true
+          body: |
+            ### 下载
+
+            | 文件 | 说明 |
+            |---|---|
+            | `ManyCourse-${{ steps.version.outputs.name }}.apk` | 正式包（R8 优化，需 Android 12+） |
+
+            **安装**：手机浏览器打开本页下载 → 允许"安装未知来源应用" → 安装。
+            已装过旧版本的可以直接覆盖安装（同签名）。
+
+            **校验**：`apk.sha256` 文件里是本次 APK 的 SHA-256；Windows 上执行
+            `Get-FileHash ManyCourse-${{ steps.version.outputs.name }}.apk -Algorithm SHA256` 对比即可。
+          files: |
+            ManyCourse-${{ steps.version.outputs.name }}.apk
+            apk.sha256
+          fail_on_unmatched_files: true
+
+  # ══════════════════════════════════════════════════════════════════════════
+  # 3) 持续部署：下载页上 Pages
+  # ══════════════════════════════════════════════════════════════════════════
+  pages:
+    name: Deploy Download Page
+    # 只在默认分支的推送、或手动触发时部署
+    if: >-
+      (github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch))
+      || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    # 不取消进行中的部署：Pages 部署被中断会留下半成品
+    concurrency:
+      group: pages
+      cancel-in-progress: false
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
+
+      # 只发布静态页，别把任何构建目录带走（仓库根作为站点根，index.html 直接可访问）
+      - name: Prune build outputs
+        run: rm -rf app/build build .gradle .kotlin
+
+      - name: Upload site
+        uses: actions/upload-pages-artifact@v3
+        with:
+          # 整仓库根目录：index.html 在根上（根目录没有下划线开头的文件，
+          # 不会踩 Jekyll 的忽略规则；真加了再补 .nojekyll）
+          path: .
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

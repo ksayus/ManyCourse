@@ -183,13 +183,27 @@ internal fun buildDayEntries(
     return localCourses.sortedBy { it.startPeriod }.map { CourseEntry.Local(it) }
 }
 
-/** 同一天的课里，"当前时间之后的第一门"的 [CourseEntry.key]（用于高亮提示下一节课）*/
-fun nextCourseKey(entries: List<CourseEntry>, now: java.time.LocalTime): String? =
-    entries.firstOrNull { entry ->
-        val time = runCatching { java.time.LocalTime.parse(entry.startTime.padStart(5, '0')) }
-            .getOrNull()
-        time == null || time >= now
-    }?.key
+/**
+ * 同一天的课里，"当前时间之后的第一门"的 [CourseEntry.key]（用于高亮提示下一节课）。
+ *
+ * ## 全都没有时刻时返回 null（**整块停用**）
+ *
+ * 这所学校还没拿到准确作息时（如广工，见 [Timetables.gdut]），每门课的 [CourseEntry.startTime]
+ * 都是空串 —— 那种情况下**一门都不该高亮**：
+ *  - 若沿用"解析不出时刻就当它是下一门"的兜底，第一门课会**永远**亮着（看着像"下一节就是它"），
+ *    那是在说一件我们并不知道的事；
+ *  - 一门课时刻脏、其余正常时兜底仍然保留（宁可信它是"还没上"，见下）。
+ *
+ * @return null = 说不清（没有时刻表，或那天没课）
+ */
+fun nextCourseKey(entries: List<CourseEntry>, now: java.time.LocalTime): String? {
+    val times = entries.map { entry ->
+        entry to runCatching { java.time.LocalTime.parse(entry.startTime.padStart(5, '0')) }.getOrNull()
+    }
+    // 一门时刻都取不到 = 这所学校没有时刻表（而不是"数据脏"）→ 不猜
+    if (times.isNotEmpty() && times.all { (_, time) -> time == null }) return null
+    return times.firstOrNull { (_, time) -> time == null || time >= now }?.first?.key
+}
 
 /**
  * 本周里"星期几 = [weekday]"的那一天。

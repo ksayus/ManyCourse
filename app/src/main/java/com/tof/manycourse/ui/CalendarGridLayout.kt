@@ -125,7 +125,8 @@ private val MaxRowHeight = 88.dp
 private val CompactCardRowHeight = 62.dp
 
 /**
- * **一行 = 一个"两节块"**（1-2 / 3-4 / … / 15-16），与课表的实际排课一致
+ * **一行 = 一个"两节块"**（1-2 / 3-4 / …；最后一行到第几节由**学校**的节次表决定 ——
+ * 默认 16 节排到 `15-16`，广工 14 节排到 `13-14`，见 `Timetable`），与课表的实际排课一致
  * （两节连排 80 分钟、块间休息 10~40 分钟）。块的定义在数据层
  * （`CourseRepository.blockRanges`），这里不再另写一个 2。
  */
@@ -137,10 +138,11 @@ private val HeaderHeight = 40.dp
 /**
  * 网格最多画多少行（= 块数）。
  *
- * 正常数据最多 `CourseRepository.BLOCK_COUNT` 行（16 节 → 8 行）；这里取 max 只是防脏数据
- * 把行数撑爆（见 [buildDaySlots] 的夹取规则）。
+ * **不能写成常量**：块数按学校不同（默认 16 节 → 8 行；广工 14 节 → 7 行，
+ * 见 `Timetable`）—— 写死一个 8 会让广工多画一行不存在的时间段。
+ * 这里取上限只是防脏数据把行数撑爆（见 [buildDaySlots] 的夹取规则）。
  */
-private val MaxGridRows = (CourseRepository.MAX_PERIOD + PeriodsPerRow - 1) / PeriodsPerRow
+private val MaxGridRows: Int get() = CourseRepository.BLOCK_COUNT
 
 /** 在网格上左右滑动换周的门槛：滑动幅度不到这个值就当误触（避免翻页时蹭到就换周） */
 private val SwipeWeekThreshold = 56.dp
@@ -204,6 +206,7 @@ private val CardInnerVerticalPadding = 8.dp
  *
  * 调用方给 `weight(1f)`（高度有界），于是：
  *  - **行数**只算"整个学期真的排过课"的行（[gridRowCount]）：排到下午就是 5 行、有晚自习才 8 行；
+ *    上限是**这所学校的块数**（默认 16 节 → 8 行，广工 14 节 → 7 行，见 `Timetable`）；
  *  - **行高** = 网格剩多少高 ÷ 行数（[GridBody] 量出来现算，36~88dp）。
  *
  * 两者相乘正好铺满那条高度，所以**看完这一周的七天不用上下滑**，
@@ -220,7 +223,14 @@ private val CardInnerVerticalPadding = 8.dp
  * ## 点亮：点哪门课，哪一行、哪一列一起亮
  *
  * 点卡片 → 该课所在的**列（星期几）高亮**、**行（第几节）高亮**（时间轴那一格也变色），
- * 卡片本身加一圈强调色描边，同时弹出那一天的课程详情 —— 一眼看清"这门课落在哪一行哪一列"。
+ * **被点中的那一张卡**加一圈强调色描边，同时弹出那一天的课程详情 ——
+ * 一眼看清"这门课落在哪一行哪一列"。
+ *
+ * ★ 选中态是 [TappedCard]（**哪一天 + 哪一行**两个坐标），不是单独一个行号：
+ *  - **天**必须一起记：只比行的话，同节次的其他日期会跟着描边
+ *    （点周一第 1-2 节的课，周三第 1-2 节那张也亮）；
+ *  - **行**必须是网格行号（第几个"两节块"），不是"这一列第几个槽位" ——
+ *    两者不是一回事，换算见 [slotRowStarts]。
  *
  * ## 亮的与灰的：换周只改颜色，不动布局
  *
@@ -307,8 +317,10 @@ internal fun CalendarGridLayout(
     val selectedEntries = realOfDay.getOrNull(selected.dayOfWeek.value - 1)
     val currentPeriod = currentPeriodOf(today, days, rowCount * PeriodsPerRow)
     val weekIndex = remember(weekStart, weeks) { weekIndexFor(weekStart, weeks) }
-    // 点过的格子（行 = 第几行两节，列 = 星期几）：点的行会连同时间轴一起点亮
-    var tappedRow by remember(weekStart) { mutableStateOf<Int?>(null) }
+    // 点过的那张卡（天 = 第几列，行 = 网格里第几个"两节块"）：点的那一行连同时间轴一起点亮，
+    // 被点中的那张卡片自己加一圈描边。
+    // ★ 两个坐标缺一不可：只记行的话，同节次的其他日期会跟着亮（见 TappedCard）
+    var tapped by remember(weekStart) { mutableStateOf<TappedCard?>(null) }
     // 左右滑动换周：门槛 56dp，滑动幅度不够就当误触，不动周次
     val swipeThreshold = with(LocalDensity.current) { SwipeWeekThreshold.toPx() }
     // 换周一律走 onSelect（保留"选中了星期几"）：教学周列表在就按列表翻，
@@ -398,12 +410,12 @@ internal fun CalendarGridLayout(
                         today = today,
                         selected = selected,
                         currentPeriod = currentPeriod,
-                        tappedRow = tappedRow,
+                        tapped = tapped,
                         onSelect = onSelect,
-                        onTappedRow = { tappedRow = it },
+                        onTappedRow = { tapped = it },
                         // 点任意一张卡 → 点亮那一行 / 那一列，并打开**那一天**的课程详情
                         onOpenDayDetail = { index, row ->
-                            tappedRow = row
+                            tapped = TappedCard(day = index, row = row)
                             onSelect(days[index])
                             onCourseClick(days[index], dayCourses[index])
                         },
@@ -485,6 +497,10 @@ private fun WeekSliderRow(
  * 今天那格画成**实心胶囊**（参考图的蓝色胶囊）：一眼就能找到今天，比一条描边清楚；
  * 选中的那天用淡色底，两者可以同时成立（选中今天）。
  *
+ * 最左边那一格（月份）**在这一格里居中**：它占的正是下面时间轴那一格，居中了才和右边七列
+ * 「周几 + 日期」的居中表头是同一种排法（原来是 `CenterStart`，一格比「9月」宽出一截，
+ * 看着像月份贴在最左边、右边空着半个格子）。
+ *
  * @param axisWidth 左轴占的宽度（与网格的时间轴**同一份实测值**，否则表头和网格会错位）
  */
 @Composable
@@ -502,7 +518,8 @@ private fun DayHeaderRow(
             Modifier
                 .width(axisWidth)
                 .fillMaxSize(),
-            contentAlignment = Alignment.CenterStart,
+            // 月份在这**一格**里居中（横向 + 纵向）：与右边七列居中的「周几 / 日期」同一排法
+            contentAlignment = Alignment.Center,
         ) {
             Text(
                 text = monthLabel,
@@ -559,7 +576,8 @@ private fun DayHeaderRow(
 }
 
 /**
- * 左侧时间轴（骨架）：**每两节一行**，三行文字 —— **开始时刻 / 第 N-M 节 / 结束时刻**。
+ * 左侧时间轴（骨架）：**每两节一行**，三行文字 —— **开始时刻 / 第 N-M 节 / 结束时刻**
+ * （这所学校还没有时刻表时只画中间那行「第N-M节」，见下）。
  *
  * ```
  *  9:00   ← 这一段从几点开始
@@ -575,12 +593,25 @@ private fun DayHeaderRow(
  * 三行都完整显示，而且轴还能比原来更窄（省下的宽度全给卡片）。
  * 起止时刻的口径在数据层：[CourseRepository.blockStartTime] / [CourseRepository.blockEndTime]。
  *
- * 它**不参与任何滚动** —— 与右侧网格逐行对齐才有"刻度"的意义；
- * 行高由 [GridBody] 现算（整屏自适应），所以三行用 `SpaceBetween` 摊在整行上：
- * 开始时刻贴着这一行的上沿、结束时刻贴着下沿，读起来就是一把尺子。
+ * ## 三行**抱成一组**，整组落在这一行的竖直中线上
+ *
+ * 它**不参与任何滚动** —— 与右侧网格逐行对齐才有"刻度"的意义；行高由 [GridBody] 现算
+ * （整屏自适应，36~88dp），所以三行**必须紧挨着**：行高多大，三个数都是一组的。
+ *
+ * 原来用 `SpaceBetween` 把三行摊在整行上（开始时刻贴行上沿、结束时刻贴行下沿，"像一把尺子"）：
+ * 行高只有 36dp（小屏 / 晚自习 8 行）时确实像尺子，但行高按屏幕涨到 80dp 上下时，
+ * 开始/结束时刻被推到这一行的上下两条网格线上，离中间那行「第N-M节」隔着大半行 ——
+ * 三个数看着像三行不相干的字，谁是谁的都认不出来。
+ * 现在整组居中，行高从 36dp 到 88dp 都长一个样。
  *
  * 被点亮的那一行（点过课程卡片 / "现在"正在上的那一段）走强调色 + 加粗，
  * 于是"这门课落在哪一段"不用数格子。
+ *
+ * ## 没有时刻表的学校：只画中间那一行
+ *
+ * 这所学校还没拿到准确作息时（如广工，见 `Timetables.gdut`），开始/结束时刻是**空串**，
+ * 这里就只画「第N-M节」—— 一根只有节次的刻度，也比一排编出来的时刻诚实
+ * （编出来的 9:00 会让人以为"这就是我的上课时间"）。
  *
  * @param metrics 轴宽 + 字号 + 中间那行的写法（[rememberAxisMetrics] 实测得到）
  */
@@ -602,24 +633,35 @@ private fun PeriodAxis(
                     .fillMaxWidth()
                     .padding(end = 4.dp),
                 horizontalAlignment = Alignment.End,
-                verticalArrangement = Arrangement.SpaceBetween,
+                // 三行抱成一组、整组在这一行里居中（见 KDoc）：行高由屏幕现算，
+                // 不能让行高一高就把开始/结束时刻甩到这一行两端的网格线上
+                verticalArrangement = Arrangement.Center,
             ) {
-                AxisLabel(
-                    text = CourseRepository.blockStartTime(row),
-                    metrics = metrics,
-                    highlighted = highlighted,
-                )
+                // ★ 时刻是**可以没有的**（这所学校还没拿到准确作息，见 Timetables.gdut）：
+                //   那就只画中间那一行「第N-M节」—— 宁可少一行，也不编一个时刻出来；
+                //   只剩一行时它照样在这一行里居中（排版由 verticalArrangement 管）
+                val startTime = CourseRepository.blockStartTime(row)
+                val endTime = CourseRepository.blockEndTime(row)
+                if (startTime.isNotBlank()) {
+                    AxisLabel(
+                        text = startTime,
+                        metrics = metrics,
+                        highlighted = highlighted,
+                    )
+                }
                 AxisLabel(
                     text = axisPeriodLabel(firstPeriod, metrics.withPrefix),
                     metrics = metrics,
                     highlighted = highlighted,
                     emphasized = true,
                 )
-                AxisLabel(
-                    text = CourseRepository.blockEndTime(row),
-                    metrics = metrics,
-                    highlighted = highlighted,
-                )
+                if (endTime.isNotBlank()) {
+                    AxisLabel(
+                        text = endTime,
+                        metrics = metrics,
+                        highlighted = highlighted,
+                    )
+                }
             }
         }
     }
@@ -668,6 +710,7 @@ private fun AxisLabel(
  *    页头、滑块、汇总条不动。
  *
  * @param axis 时间轴度量；[AxisMetrics.width] 同时决定表头"月份格"与网格左轴的宽度
+ * @param tapped 点过的那张卡（天 + 网格行）；时间轴那一格与整行底色都跟着它亮
  * @param modifier 由调用方 `weight(1f)` 给出**有界**高度（所以这里能读 `maxHeight`）
  */
 @Composable
@@ -679,10 +722,10 @@ private fun GridBody(
     today: LocalDate,
     selected: LocalDate,
     currentPeriod: Int?,
-    tappedRow: Int?,
+    tapped: TappedCard?,
     onSelect: (LocalDate) -> Unit,
-    onTappedRow: (Int) -> Unit,
-    /** 点某一天里的某一行卡片：参数是那一列在 [days] 里的下标、以及行号 */
+    onTappedRow: (TappedCard) -> Unit,
+    /** 点某一天里的某一行卡片：参数是那一列在 [days] 里的下标、以及**网格行号**（0 起） */
     onOpenDayDetail: (Int, Int) -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -721,7 +764,7 @@ private fun GridBody(
                 today = today,
                 selected = selected,
                 nowRow = nowRow,
-                tappedRow = tappedRow,
+                tapped = tapped,
                 onSelect = onSelect,
                 onTappedRow = onTappedRow,
                 onOpenDayDetail = onOpenDayDetail,
@@ -751,9 +794,9 @@ private fun GridCanvas(
     today: LocalDate,
     selected: LocalDate,
     nowRow: Int?,
-    tappedRow: Int?,
+    tapped: TappedCard?,
     onSelect: (LocalDate) -> Unit,
-    onTappedRow: (Int) -> Unit,
+    onTappedRow: (TappedCard) -> Unit,
     onOpenDayDetail: (Int, Int) -> Unit,
     outline: Color,
     todayTint: Color,
@@ -766,7 +809,8 @@ private fun GridCanvas(
             rowCount = rowCount,
             rowHeight = rowHeight,
             metrics = axis,
-            highlightRow = tappedRow ?: nowRow,
+            // 时间轴那一格跟着点过的**行**走（行号是网格行号，与 nowRow 同一套坐标）
+            highlightRow = tapped?.row ?: nowRow,
         )
 
         Box(
@@ -807,8 +851,10 @@ private fun GridCanvas(
                 )
             }
 
-            // ② 点过的那一行：整行淡淡铺一层，配合时间轴上那一格的强调色（X/Y 一起亮）
-            tappedRow?.let { row ->
+            // ② 点过的那一行：整行淡淡铺一层，配合时间轴上那一格的强调色（X/Y 一起亮）。
+            //    ★ 用的是**网格行号**（卡片所在的那个"两节块"），跟卡片的纵向位置同一套坐标 ——
+            //      拿"这一列第几个槽位"来铺，跨行的块（连上四节）会把这一层推到上面一行去
+            tapped?.row?.let { row ->
                 Box(
                     Modifier
                         .offset(y = rowHeight * row)
@@ -822,6 +868,7 @@ private fun GridCanvas(
             Row(Modifier.fillMaxSize()) {
                 days.forEachIndexed { index, date ->
                     DayColumn(
+                        dayIndex = index,
                         cards = cardsOfDay.getOrElse(index) { emptyList() },
                         rowCount = rowCount,
                         rowHeight = rowHeight,
@@ -830,7 +877,7 @@ private fun GridCanvas(
                         todayTint = todayTint,
                         onSelect = { onSelect(date) },
                         onOpenDetail = { row -> onOpenDayDetail(index, row) },
-                        tappedRow = tappedRow,
+                        tapped = tapped,
                         onTappedRow = onTappedRow,
                         modifier = Modifier.weight(1f),
                     )
@@ -845,9 +892,15 @@ private fun GridCanvas(
  *
  * 同一块里的多张卡片**重叠**着放：这一周会上的那张压在最前面（[GridCard.dim] == false 后画），
  * 后面那几张灰着、往右下缩一点露出个边 —— 换周时"换牌"，位置一张不动。
+ *
+ * ★ 槽位下标 ≠ 网格行号：`slots.forEachIndexed` 给的是"这一列第几个槽位"，
+ * 而点亮（整行底色、时间轴那一格）与卡片自身的高亮要的是**网格行号**。
+ * 一列里只要有一块跨两行（连上四节），两者就错开 —— 换算收在 [slotRowStarts]。
  */
 @Composable
 private fun DayColumn(
+    /** 这一列是星期几（0 = 周一）：与 [TappedCard.day] 对齐，缺了它就无法区分"同节次的其他日期" */
+    dayIndex: Int,
     cards: List<GridCard>,
     rowCount: Int,
     rowHeight: Dp,
@@ -855,13 +908,15 @@ private fun DayColumn(
     isSelected: Boolean,
     todayTint: Color,
     onSelect: () -> Unit,
-    /** 点这一列里的某一行：打开这一天的课表（那一天有哪些课，由调用方给） */
+    /** 点这一列里的某一行：打开这一天的课表（那一天有哪些课，由调用方给）。参数 = 网格行号（0 起） */
     onOpenDetail: (Int) -> Unit,
-    tappedRow: Int?,
-    onTappedRow: (Int) -> Unit,
+    tapped: TappedCard?,
+    onTappedRow: (TappedCard) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val slots = remember(cards, rowCount) { buildDaySlots(cards, rowCount) }
+    // 每个槽位落在网格的第几行（0 起）：下面点亮 / 上报的行号必须用它，不能用槽位下标
+    val rowStarts = remember(slots) { slotRowStarts(slots) }
     val interactionSource = remember { MutableInteractionSource() }
 
     Column(
@@ -875,7 +930,8 @@ private fun DayColumn(
                 }
             )
     ) {
-        slots.forEachIndexed { rowIndex, slot ->
+        slots.forEachIndexed { slotIndex, slot ->
+            val gridRow = rowStarts[slotIndex]
             when (slot) {
                 // 空行也能点：点一下就把这一天选中（表头胶囊 + 汇总条跟着变）。
                 // 反馈用"无涟漪 + 只改选中态"，与玻璃卡片的按下反馈保持同一种克制
@@ -902,7 +958,13 @@ private fun DayColumn(
                         val depth = ordered.lastIndex - index
                         GridCourseCard(
                             card = card,
-                            highlighted = rowIndex == tappedRow && !card.dim,
+                            // ★ 天 + 行**两个**都要对上：只比行的话，同节次的其他日期会跟着描边
+                            highlighted = isTappedCard(
+                                tapped = tapped,
+                                day = dayIndex,
+                                row = gridRow,
+                                dim = card.dim,
+                            ),
                             // 多行高的卡片（连上四节）不算"矮"，排版按格子本身多高来定
                             compact = rowHeight * slot.rows < CompactCardRowHeight,
                             modifier = Modifier
@@ -913,8 +975,8 @@ private fun DayColumn(
                                     bottom = StackedCardInset * depth,
                                 ),
                             onClick = {
-                                onTappedRow(rowIndex)
-                                onOpenDetail(rowIndex)
+                                onTappedRow(TappedCard(day = dayIndex, row = gridRow))
+                                onOpenDetail(gridRow)
                             },
                         )
                     }
@@ -941,7 +1003,8 @@ private fun DayColumn(
  *
  * @param card [GridCard.dim] = true 时画成灰调（这一周不上），
  *   所以同一门课"这周亮、下周灰"是同一张卡片换个底色，一眼可比
- * @param highlighted 点过的那一张：加一圈强调色描边（和 X/Y 轴的点亮配套）
+ * @param highlighted 被**点中的那一张**（判定见 [isTappedCard]）：加一圈强调色描边（和 X/Y 轴的点亮配套）。
+ *   同节次的其他日期不算 —— 那是"选中一门课，别的日子也跟着亮"那个 bug
  * @param compact 格子矮（< [CompactCardRowHeight]）时的紧凑排版
  */
 @OptIn(ExperimentalFoundationApi::class)
@@ -1100,22 +1163,31 @@ private fun axisPeriodLabel(firstPeriod: Int, withPrefix: Boolean): String {
  *  - 写死了也会**白白占宽**：七列平分屏幕，轴每多 1dp、每列就少 1/7dp，
  *    实测（本机 font_scale = 1.17）下轴只要 40dp 出头，省下的 10dp 全归卡片。
  *
- * `remember` 的两个 key 都是必要的：字宽随 [LocalDensity] 里的 **fontScale** 变，
- * 系统字号一改就要重量（不然量出来的宽度和实际画出来的对不上，又会被截断）。
+ * `remember` 的三个 key 都是必要的：字宽随 [LocalDensity] 里的 **fontScale** 变，
+ * 系统字号一改就要重量；作息表（[CourseRepository.timetable]）换学校时会换一份 ——
+ * 量的是哪所学校的文字、画的就是哪所学校的文字，不然"量 A 画 B"又会把字截断。
  */
 @Composable
 private fun rememberAxisMetrics(): AxisMetrics {
     val measurer = rememberTextMeasurer()
     val density = LocalDensity.current
-    return remember(measurer, density) {
-        /** 某一档样式下，三行文字里最宽的那行有多宽（px） */
+    // 读快照状态：换学校（作息表换了）时这整个函数会重新量一遍
+    val timetable = CourseRepository.timetable
+    return remember(measurer, density, timetable) {
+        /**
+         * 某一档样式下，这一行里最宽的那行文字有多宽（px）。
+         *
+         * 时刻可能是空的（这所学校还没拿到作息）：空串**不参与测量** ——
+         * 它既不会被画出来（见 [PeriodAxis]），量它也没有意义。
+         */
         fun widest(style: TextStyle, withPrefix: Boolean): Int =
             (0 until CourseRepository.BLOCK_COUNT).maxOf { block ->
                 listOf(
                     axisPeriodLabel(block * PeriodsPerRow + 1, withPrefix),
                     CourseRepository.blockStartTime(block),
                     CourseRepository.blockEndTime(block),
-                ).maxOf { measurer.measure(it, style).size.width }
+                ).filter { it.isNotBlank() }
+                    .maxOf { measurer.measure(it, style).size.width }
             }
 
         val limit = with(density) { AxisTextMaxWidth.roundToPx() }
@@ -1150,6 +1222,10 @@ private fun rememberAxisMetrics(): AxisMetrics {
  * |---|---|---|
  * | 第 10 节（下午） | 5 | 约 80dp —— 卡片又大又方正 |
  * | 第 16 节（含晚自习） | 8 | 约 50dp —— 仍然全在一屏 |
+ *
+ * ★ 上限是**这所学校的块数**（[MaxGridRows] = `CourseRepository.BLOCK_COUNT`）：
+ * 默认学校 16 节 → 8 行，广工 14 节 → 7 行 —— 广工那门"第 13-14 节"的课就落在最后一行，
+ * 不会因为表里有 16 节而多出一行空的。整周一张卡都没有时也按它退化成"整张时刻表"。
  *
  * 中间的空白行**照画**（第 1-2 节有课、第 5-6 节没课）：那是"这个时段空着"的信息，
  * 只有**末尾**的空行才是纯浪费。行数最少 1 行、最多 [MaxGridRows]（防脏数据撑爆）。
@@ -1244,6 +1320,12 @@ internal fun weekRangeLabel(weekStart: LocalDate): String {
  *
  * 粒度仍然是**节次**：课表只给了每节的开始时刻，不推断分钟级的当前位置。
  *
+ * ## 没有时刻表的学校：整块停用
+ *
+ * 这所学校还没拿到准确作息时（如广工，见 `Timetables.gdut`），每一节的开始时刻都是空串
+ * → 这里返回 null → **谁都不亮**。这是刻意的：与其拿编出来的时刻算"现在上到第几节"，
+ * 不如什么都不说（那个蓝条看着像确定的事实，错的时间比没有更糟）。
+ *
  * @param days 网格上显示的这七天；今天不在其中（翻到别的周）就返回 null
  */
 internal fun currentPeriodOf(
@@ -1260,10 +1342,18 @@ internal fun currentPeriodOf(
     }
 }
 
-/** 第 [period] 节的开始时刻；越界或解析不出返回 null（脏数据不让页面崩） */
-private fun periodStartTime(period: Int): LocalTime? = runCatching {
-    LocalTime.parse(CourseRepository.periodTime(period).padStart(5, '0'))
-}.getOrNull()
+/**
+ * 第 [period] 节的开始时刻；**时刻未知**（这所学校还没拿到作息）/ 越界 / 解析不出时返回 null。
+ *
+ * 前一种情况要点名：[CourseRepository.periodTime] 对"没有时刻表"的学校返回空串，
+ * 空串绝不能 padStart 成 `00000` 拿去解析（那样会一路走到"解析失败"这条兜底路上，
+ * 语义上说不清到底是"没有作息"还是"数据脏"）。
+ */
+private fun periodStartTime(period: Int): LocalTime? {
+    val text = CourseRepository.periodTime(period)
+    if (text.isBlank()) return null
+    return runCatching { LocalTime.parse(text.padStart(5, '0')) }.getOrNull()
+}
 
 /**
  * 左右滑动换周时，下一周该落到哪一天（返回的是那一周的周一）。
@@ -1314,6 +1404,57 @@ internal fun blockOf(period: Int): Int = CourseRepository.blockIndexOf(period)
 
 /** 铺到第 [period] 节为止，一共要几行 */
 internal fun blocksOf(period: Int): Int = blockOf(period) + 1
+
+/**
+ * 被点中的那张卡片：**哪一天（列）+ 哪一行（"两节块"，0 起）**。
+ *
+ * ## 为什么是"天 + 行"两个坐标，而不是一个行号
+ *
+ * 只记行号（早先的 `tappedRow`）的点亮会漏到别的日期上：周一第 1-2 节与周三第 1-2 节
+ * 都落在网格第 1 行 —— 点周一那门课，周三那门也跟着亮。
+ * 于是"选中一门课，同节次的其他日期也一起亮"这个 bug 就是这么来的（见 [isTappedCard]）。
+ *
+ * ## 行号必须是**网格行号**
+ *
+ * 不是"这一列第几个槽位"：某一天只排 5-6 节时，那一列第一个槽位是 [DaySlot.Gap]、
+ * 卡片在第 2 个槽位上，落在网格第 3 行。两者混用会让整行底色与时间轴那一格亮错行，
+ * 换算见 [slotRowStarts]。
+ *
+ * @param day 这一列在七天里的下标（0 = 周一）
+ * @param row 网格行号（0 起，一行 = 两节）
+ */
+internal data class TappedCard(val day: Int, val row: Int)
+
+/**
+ * 这张卡片是不是"被点中的那一张"：**天与行必须同时对上**，灰卡永远不算。
+ *
+ * ★ 这条判定就是那个 bug 的闸门：早先只比 `rowIndex`（"这一列第几个槽位"），
+ * 于是周一第 1-2 节被点时，周三第 1-2 节（槽位下标同为 0）也一起被描边。
+ *
+ * 灰卡不亮：灰卡表示"这一周不上"，用户点的那个格子里的灰卡只是垫在下面的背景。
+ */
+internal fun isTappedCard(tapped: TappedCard?, day: Int, row: Int, dim: Boolean): Boolean =
+    tapped != null && !dim && tapped.day == day && tapped.row == row
+
+/**
+ * 每个槽位在网格里的**起始行**（0 起）：把 [DaySlot.rows] 一路累加，
+ * 于是"第几个槽位"换算成"第几行"。
+ *
+ * 为什么非要这一步：[buildDaySlots] 的返回值里，一个槽位可以占**不止一行**
+ * （连上四节的课占两行），所以槽位下标与网格行号在第 2 个槽位之后就错开了 ——
+ * 拿槽位下标当行号，整行底色/时间轴会往上偏（见 [TappedCard]）。
+ *
+ * @return 与 [slots] 等长，第 i 项 = 第 i 个槽位的起始行；总和 = 这一列的行数
+ */
+internal fun slotRowStarts(slots: List<DaySlot>): List<Int> {
+    val starts = mutableListOf<Int>()
+    var row = 0
+    slots.forEach { slot ->
+        starts += row
+        row += slot.rows
+    }
+    return starts
+}
 
 /**
  * 把一天的卡片铺到 [rowCount] 行的时间轴上（**一行 = 两节**）：顺序铺、按行定位、块内跨行。

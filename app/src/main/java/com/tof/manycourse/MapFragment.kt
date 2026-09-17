@@ -19,6 +19,7 @@ import androidx.fragment.app.Fragment
 import dev.chrisbanes.haze.HazeState
 import dev.chrisbanes.haze.hazeSource
 import com.tof.manycourse.data.LoginSettings
+import com.tof.manycourse.data.SessionStore
 import com.tof.manycourse.ui.MapScreen
 import com.tof.manycourse.ui.components.GlassBottomNav
 import com.tof.manycourse.ui.components.GlassHeader
@@ -27,9 +28,10 @@ import com.tof.manycourse.ui.components.isTabForeground
 import com.tof.manycourse.ui.theme.ManyCourseTheme
 
 /**
- * 校园地图页 Fragment：ComposeView 承载「当前登录学校的地图」。
+ * 校园地图页 Fragment：ComposeView 承载「当前学校的校区地图」。
  *
- * 显示哪张图由 `LoginSettings.selectedSchoolId`（登录页选中的学校）决定，
+ * 显示哪张图由**当前学校**（`SessionStore.schoolId`，其次登录页选中的那个）决定，
+ * 具体是哪个校区由**定位**决定（挑最近的校区，见 `ui/MapScreen.kt` 与 `data/SchoolMap.kt`）；
  * 映射表在 `data/SchoolMap.kt`。
  */
 class MapFragment : Fragment() {
@@ -47,12 +49,14 @@ class MapFragment : Fragment() {
         setContent {
             ManyCourseTheme {
                 val hazeState = remember { HazeState() }
-                // 仅当本页可见且在前台时驱动背景动画，隐藏页零逐帧开销
-                val backgroundAnimating = isTabForeground(TAB_INDEX)
+                // 本页是否"可见且在前台"：两个用途 ——
+                //  ① 冻结/恢复背景动画（隐藏页零逐帧开销）；
+                //  ② 门控定位：四个页面常驻，不门控的话 App 一启动就会弹定位权限框
+                val tabVisible = isTabForeground(TAB_INDEX)
 
                 Box(Modifier.fillMaxSize()) {
                     Box(Modifier.fillMaxSize().hazeSource(state = hazeState)) {
-                        LiquidGlassBackground(animate = backgroundAnimating)
+                        LiquidGlassBackground(animate = tabVisible)
                     }
                     Column(Modifier.fillMaxSize()) {
                         GlassHeader(hazeState, "校园地图")
@@ -64,9 +68,13 @@ class MapFragment : Fragment() {
                                     WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal)
                                 )
                         ) {
-                            // 直接读持久化的学校 id：登录页选完就写进去了，
-                            // 地图页不需要自己再维护一份"当前学校"
-                            MapScreen(schoolId = LoginSettings.selectedSchoolId.value)
+                            // 与课表页/日历页取"哪所学校的课表"同一个口径：登录的学校优先，
+                            // 其次是登录页里选中的那个 —— 三处不能各说各话
+                            MapScreen(
+                                schoolId = SessionStore.schoolId.value
+                                    ?: LoginSettings.selectedSchoolId.value,
+                                visible = tabVisible,
+                            )
                         }
                         GlassBottomNav(hazeState) { index ->
                             (activity as? ManyCourseMain)?.selectTab(index)

@@ -3,15 +3,20 @@ package com.tof.manycourse
 import com.tof.manycourse.data.Course
 import com.tof.manycourse.data.CourseEntry
 import com.tof.manycourse.data.CourseRepository
+import com.tof.manycourse.data.LoginSettings
 import com.tof.manycourse.data.SchoolWeek
+import com.tof.manycourse.data.SessionStore
 import com.tof.manycourse.ui.DaySlot
 import com.tof.manycourse.ui.GridCard
+import com.tof.manycourse.ui.TappedCard
 import com.tof.manycourse.ui.blockOf
 import com.tof.manycourse.ui.blocksOf
 import com.tof.manycourse.ui.buildDaySlots
 import com.tof.manycourse.ui.buildGridCards
 import com.tof.manycourse.ui.currentPeriodOf
 import com.tof.manycourse.ui.gridRowCount
+import com.tof.manycourse.ui.isTappedCard
+import com.tof.manycourse.ui.slotRowStarts
 import com.tof.manycourse.ui.weekIndexFor
 import com.tof.manycourse.ui.weekRangeLabel
 import com.tof.manycourse.ui.weekStepTarget
@@ -311,6 +316,59 @@ class ScheduleGridSlotsTest {
         assertEquals(listOf(true, false, true), weekB.map { it.dim })
     }
 
+    // ── 点亮：点一门课只亮那一张（同节次的其他日期不许跟着亮） ─────────────
+
+    @Test
+    fun slotRowStartsCountsGridRowsInsteadOfSlotIndexes() {
+        // ★ 槽位下标 ≠ 网格行号：连上四节占两行，后面那块的下标是 1、网格行号却是 2。
+        //   用下标去铺"整行底色"/点亮时间轴，就会往上偏一行
+        val slots = buildDaySlots(
+            listOf(
+                vivid(1, "连上四节的实验", startPeriod = 1, periodCount = 4), // 第 1-2 行
+                vivid(2, "下午的课", startPeriod = 5, periodCount = 2),        // 第 3 行
+            ),
+            rowCount = 5,
+        )
+
+        assertEquals("块(两行) / 块(一行) / 空行(两行)", listOf(2, 1, 2), slots.map { it.rows })
+        assertEquals("第 2 块从**第 3 行**（下标 2）开始，不是下标 1", listOf(0, 2, 3), slotRowStarts(slots))
+        assertEquals("换算出来的行号不能越出这一列", 5, slots.sumOf { it.rows })
+    }
+
+    @Test
+    fun tappingACourseDoesNotLightTheSamePeriodOnOtherDays() {
+        // ★ 这条钉的就是那个 bug：周一第 1-2 节与周三第 1-2 节都落在网格第 1 行
+        //   （槽位下标也都是 0）。点亮必须**同时**看"哪一天" —— 只看行/槽位，
+        //   点周一那门课，周三那门也跟着描边，就是"同节次的不同日期一起亮"
+        val monday = buildDaySlots(listOf(vivid(1, "高等数学", 1, 2)), rowCount = 5)
+        val wednesday = buildDaySlots(listOf(vivid(2, "大学英语", 1, 2)), rowCount = 5)
+
+        val mondayRow = slotRowStarts(monday)[0]
+        val wednesdayRow = slotRowStarts(wednesday)[0]
+        assertEquals("两天的课确实同处一行（同节次）", mondayRow, wednesdayRow)
+
+        val tapped = TappedCard(day = 0, row = mondayRow)
+        assertTrue("点过的那张卡必须亮", isTappedCard(tapped, day = 0, row = mondayRow, dim = false))
+        assertFalse(
+            "同节次的其他日期不能跟着亮",
+            isTappedCard(tapped, day = 2, row = wednesdayRow, dim = false),
+        )
+        assertFalse("别的行也不能亮", isTappedCard(tapped, day = 0, row = mondayRow + 1, dim = false))
+        assertFalse("什么都没点的时候谁都不亮", isTappedCard(null, day = 0, row = mondayRow, dim = false))
+        assertFalse("灰卡（这周不上）永远不亮", isTappedCard(tapped, day = 0, row = mondayRow, dim = true))
+    }
+
+    @Test
+    fun tappingReportsTheGridRowSoTheRowHighlightStaysOnTheRightRow() {
+        // 点卡片时上报的行号 = 网格行号（不是槽位下标）：这一天只排第 5-6 节，
+        // 槽位下标是 1、网格行号是 2 —— 上报错了，整行底色与时间轴就会亮在上面一行
+        val slots = buildDaySlots(listOf(vivid(1, "下午的课", startPeriod = 5, periodCount = 2)), rowCount = 5)
+
+        val slotIndex = slots.indexOfFirst { it is DaySlot.Block }
+        assertEquals("卡片那一块的槽位下标", 1, slotIndex)
+        assertEquals("而网格行号是 2（第 5-6 节 = 第 3 行）", 2, slotRowStarts(slots)[slotIndex])
+    }
+
     // ── 周次滑块的刻度 ─────────────────────────────────────────────────
 
     private val weeks = listOf(
@@ -564,5 +622,49 @@ class ScheduleGridSlotsTest {
             gridRowCount(listOf(buildGridCards(thisWeek, canvas))),
             gridRowCount(listOf(buildGridCards(otherWeek, canvas))),
         )
+    }
+
+    // ── 行数上限跟着**学校**的节数走（广工 14 节 → 最多 7 行） ──────────────
+
+    @Test
+    fun gridStopsAtFourteenPeriodsAtGdut() {
+        // ★ 广工一天 14 节（它自己的课表页就是「第01节 … 第14节」14 行）：
+        //   网格最多 7 行，第 13-14 节的课落在最后一行，脏数据也夹到第 14 节 ——
+        //   不能因为默认表有 16 节就替广工多画一行不存在的时间段
+        withSchool("gdut") {
+            assertEquals("第 13-14 节 = 第 7 行", 7, gridRowCount(listOf(listOf(dim(1, "晚课", 13, 2)))))
+            assertEquals("第 11-12 节 = 第 6 行", 6, gridRowCount(listOf(listOf(dim(2, "下午最后一节", 11, 2)))))
+            assertEquals("脏数据（第 99 节）夹到第 14 节 → 第 7 行", 7, gridRowCount(listOf(listOf(dim(3, "脏数据", 99, 2)))))
+            assertEquals(
+                "整周没课 → 退回这所学校的整张时刻表（7 行，而不是 8 行）",
+                7,
+                gridRowCount(listOf(emptyList(), emptyList())),
+            )
+        }
+    }
+
+    @Test
+    fun theSameCourseFallsOnDifferentRowsAtDifferentSchools() {
+        // 同一门"第 5-6 节"的课：默认表与广工表都一样（两节一块、从第 1 行数起）——
+        // 这条钉的是"块的定义（两节一行）与学校无关，只有**块数**随学校变"
+        withSchool(null) { assertEquals(3, gridRowCount(listOf(listOf(dim(1, "下午课", 5, 2))))) }
+        withSchool("gdut") { assertEquals(3, gridRowCount(listOf(listOf(dim(1, "下午课", 5, 2))))) }
+    }
+
+    /**
+     * 临时把"当前学校"设成 [schoolId] 跑一段，用完还原 —— `SessionStore` 是进程级单例，
+     * 留着"广工"会把别的用例（默认 16 节那些断言）带红。
+     */
+    private fun <T> withSchool(schoolId: String?, block: () -> T): T {
+        val previousSchool = SessionStore.schoolId.value
+        val previousSelected = LoginSettings.selectedSchoolId.value
+        return try {
+            SessionStore.schoolId.value = schoolId
+            LoginSettings.selectedSchoolId.value = null
+            block()
+        } finally {
+            SessionStore.schoolId.value = previousSchool
+            LoginSettings.selectedSchoolId.value = previousSelected
+        }
     }
 }

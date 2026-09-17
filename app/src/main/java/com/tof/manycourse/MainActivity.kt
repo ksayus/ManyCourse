@@ -150,8 +150,8 @@ class MainActivity : ComponentActivity() {
             true
         }
 
-        val manyCourseIcon = findViewById<ImageView>(R.id.ManyCourseIcon)
-        manyCourseIcon.setImageResource(R.mipmap.many_course_icon_)
+        // 登录页图标由布局的 android:src 直接给出，这里不再 setImageResource ——
+        // 图和 View 都写在 activity_login.xml 里，改图标只需要换资源文件
 
         // 登录页玻璃卡片跟随全局玻璃风格设置
         applyGlassMode()

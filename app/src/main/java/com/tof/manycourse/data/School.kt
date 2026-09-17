@@ -14,12 +14,17 @@ package com.tof.manycourse.data
  * @param baseUrl 教务系统根地址，**必须带协议且不带结尾斜杠**，如 `https://jwxt.gzus.edu.cn`；
  *                各接口的完整地址由实现类在这个根地址上拼
  * @param system  教务系统类型备注（仅用于排查问题 / 下拉副标题，不参与业务）
+ * @param timetable 这所学校的**节次表**（一天几节、每节几点到几点）。
+ *                默认 [Timetables.default]（16 节 / 8 个两节块）；
+ *                节数不一样的学校（如广东工业大学 14 节）在自己的实现文件里给一张表 ——
+ *                节次是**学校的事实**，跟着学校一起声明，别处不用再记一份。
  */
 data class School(
     val id: String,
     val name: String,
     val baseUrl: String,
     val system: String = "",
+    val timetable: Timetable = Timetables.default,
 ) {
     /** 主机名（去掉协议与结尾斜杠），登录页下拉的副标题用它区分同名学校 */
     val host: String

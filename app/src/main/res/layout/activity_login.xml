@@ -54,8 +54,11 @@
             app:layout_constraintEnd_toEndOf="parent" />
 
         <!--
-          图标：不再垫玻璃圆盘、也不加投影（半透明圆盘上的投影会透出来显脏），
-          等正式图标到位后直接替换 android:src 即可
+          图标：不再垫玻璃圆盘、也不加投影（半透明圆盘上的投影会透出来显脏）。
+          图来自 drawable-nodpi/many_course_icon.png —— 原分辨率、四周圆角外是透明的，
+          叠在渐变背景上不会出现一圈"图片自己的底色"。
+          drawable-nodpi 表示不做密度缩放：这张图按 96dp 显示，任何密度下都由 ImageView
+          的 fitCenter 去缩，源图只有一份，省得为每个密度存一遍同样的位图。
         -->
         <ImageView
             android:id="@+id/ManyCourseIcon"
@@ -64,13 +67,13 @@
             android:layout_marginTop="12dp"
             android:contentDescription="@null"
             android:scaleType="fitCenter"
+            android:src="@drawable/many_course_icon"
             app:layout_constraintBottom_toTopOf="@id/LoginTitle"
             app:layout_constraintEnd_toEndOf="parent"
             app:layout_constraintStart_toStartOf="parent"
             app:layout_constraintTop_toTopOf="parent"
             app:layout_constraintVertical_bias="0"
-            app:layout_constraintVertical_chainStyle="packed"
-            tools:src="@mipmap/many_course_icon_" />
+            app:layout_constraintVertical_chainStyle="packed" />
 
         <TextView
             android:id="@+id/LoginTitle"

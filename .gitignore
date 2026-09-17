@@ -69,3 +69,10 @@ Thumbs.db
 # campus-schedule 是设计系统的一次性导出（HTML/CSS/JSON 预览页 + SKILL.md），
 # 既不参与编译、也没被 app/ 引用 —— 设计稿留在本地看就行
 /campus-schedule/
+
+# ── 图标源文件 ──────────────────────────────────────────────────────────
+# tools/icon/ 放设计给的原始 .ico（里面是 16～256px 七张 PNG）。App 编译用的是
+# tools/make_launcher_icons.ps1 从它生成的那批 PNG（在 res/ 里，已提交），
+# .ico 本身不参与构建，属于上面说的"设计素材"。
+# 换图标：把新 .ico 丢进 tools/icon/，跑一次 pwsh tools/make_launcher_icons.ps1。
+/tools/icon/

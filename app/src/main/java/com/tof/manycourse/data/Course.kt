@@ -39,7 +39,13 @@ data class Course(
      */
     val fromSchool: Boolean = false,
 ) {
-    /** 开始时间，按节次实时计算 */
+    /**
+     * 开始时间，按节次实时计算（走**当前学校**的作息表）。
+     *
+     * **可能是空串**：这所学校还没拿到准确作息时（如广工，见 [Timetables.gdut]）
+     * 宁可空着，也不编一个时刻出来 —— 卡片那行会只显示地点（`listOf(startTime, room)
+     * .filter { it.isNotBlank() }`）。
+     */
     val startTime: String get() = CourseRepository.periodTime(startPeriod)
 
     /** 展示用："第1-2节" */
@@ -51,65 +57,48 @@ data class Course(
 /** 课程仓库：内存数据 + Compose 可观察状态，增删后所有页面实时刷新 */
 object CourseRepository {
 
-    /**
-     * **每一节课的时刻表 = 8 个"两节块"**（第 1-2 节、第 3-4 节 … 第 15-16 节），共 16 节。
-     *
-     * ```
-     * 1-2   9:00-10:20      9-10   15:30-16:50
-     * 3-4  10:40-12:00     11-12   17:00-18:20
-     * 5-6  12:30-13:50     13-14   19:00-20:20
-     * 7-8  14:00-15:20     15-16   20:30-21:50
-     * ```
-     *
-     * 为什么按"块"存而不是按"节"存：课表本来就是两节连排（连上 80 分钟、块间休息 10~40 分钟），
-     * 周视图是**一行两节**、时间轴也按块写；把块起止写死一张表，
-     * 块内的两节（各 [PERIOD_MINUTES] 分钟）由它推出来，就不会出现"表和展示对不上"。
-     * 单测 `ScheduleGridSlotsTest` 把这 8 行逐条钉住。
-     */
-    private val blockRanges = listOf(
-        "9:00" to "10:20",
-        "10:40" to "12:00",
-        "12:30" to "13:50",
-        "14:00" to "15:20",
-        "15:30" to "16:50",
-        "17:00" to "18:20",
-        "19:00" to "20:20",
-        "20:30" to "21:50",
-    )
-
-    /** 一个块里连排两节 */
+    /** 一个块里连排两节（各校一致：课表就是两节连排） */
     const val PERIODS_PER_BLOCK = 2
 
     /**
-     * 一节课多长（分钟）：块长 80 分钟 ÷ 2 = **40**。
+     * **当前作息** —— 节次表跟着"当前学校"走（见 [Timetable]）。
+     *
+     * 取"哪所学校的课表"的口径与 `CourseSync` / 日历页完全一致：
+     * **登录的学校优先，其次是登录页选中的学校**；都没有（未登录 / 本地调试）就是默认那张
+     * 16 节的表。
+     *
+     * 读的是 [SessionStore.schoolId] / [LoginSettings.selectedSchoolId] 这两个 Compose 状态，
+     * 所以在页面里读它会在**换学校时自动重组**（时间轴行数、节次选择都跟着变）。
+     */
+    val timetable: Timetable
+        get() = Timetables.of(SessionStore.schoolId.value ?: LoginSettings.selectedSchoolId.value)
+
+    /**
+     * 一节课多长（分钟）：块长 80 分钟 ÷ 2 = **40**（默认表）。
      *
      * 用它把"块起点"推成两节的开始/结束时刻（`9:00~9:40`、`9:40~10:20`），
-     * 也用来判断"现在正在上哪一节"。与 [blockRanges] 自洽由单测守着。
+     * 也用来判断"现在正在上哪一节"。口径在 [Timetable.periodMinutes]（按学校）。
      */
-    const val PERIOD_MINUTES = 40
+    val PERIOD_MINUTES: Int get() = timetable.periodMinutes
 
-    /** 最大节次 = 块数 × 每块两节 = 16 */
-    val MAX_PERIOD: Int = blockRanges.size * PERIODS_PER_BLOCK
+    /**
+     * 最大节次 = 块数 × 每块两节。
+     *
+     * 默认表 16 节；**广东工业大学 14 节**（它自己的课表页就是 14 行，见 [Timetables.gdut]）——
+     * 「添加课程」的节次选择与数据夹取都读这里，所以广工不会再出现第 15-16 节。
+     */
+    val MAX_PERIOD: Int get() = timetable.maxPeriod
 
-    /** 第 [period] 节的开始时刻；**越界的节次返回空串**（宁可空着，也不要编一个时刻出来） */
-    fun periodTime(period: Int): String {
-        if (period !in 1..MAX_PERIOD) return ""
-        val blockStart = blockRanges[blockIndexOf(period)].first
-        // 奇数节就是块的开头，偶数节是块内第二节
-        return if (period % PERIODS_PER_BLOCK == 1) {
-            blockStart
-        } else {
-            parseTime(blockStart)?.let { formatTime(it.plusMinutes(PERIOD_MINUTES.toLong())) }.orEmpty()
-        }
-    }
+    /** 块数（= 周视图的行数上限）：默认 16 节 → 8 行；广工 14 节 → 7 行 */
+    val BLOCK_COUNT: Int get() = timetable.blockCount
 
-    /** 某一节的结束时刻（按 [PERIOD_MINUTES] 推算）；没有这一节则返回空串 */
-    fun periodEndTime(period: Int): String {
-        val start = parseTime(periodTime(period)) ?: return ""
-        return formatTime(start.plusMinutes(PERIOD_MINUTES.toLong()))
-    }
+    /** 第 [period] 节的开始时刻；**越界、或这所学校还没有时刻表时返回空串**（不编时刻）*/
+    fun periodTime(period: Int): String = timetable.startOfPeriod(period)
 
-    /** 某一节自己的刻度文案：`9:00~9:40`；节次越界或时刻解析不出时返回空串 */
+    /** 某一节的结束时刻（按 [PERIOD_MINUTES] 推算）；没有这一节/没有时刻则返回空串 */
+    fun periodEndTime(period: Int): String = timetable.endOfPeriod(period)
+
+    /** 某一节自己的刻度文案：`9:00~9:40`；节次越界或时刻未知时返回空串 */
     fun periodRangeLabel(period: Int): String {
         val start = periodTime(period)
         val end = periodEndTime(period)
@@ -119,7 +108,8 @@ object CourseRepository {
     /**
      * 连上几节时的整段时间：`9:00~10:20`（第一节开始 → 最后一节结束）。
      *
-     * 课程详情的「上课时间」用它。
+     * 课程详情的「上课时间」用它；**时刻未知时返回空串**，那一格就只写节次
+     * （调用方按 `isNotBlank` 过滤，见 `courseDetailOf`）。
      */
     fun periodRangeLabel(startPeriod: Int, periodCount: Int): String {
         val start = periodTime(startPeriod)
@@ -129,42 +119,30 @@ object CourseRepository {
     }
 
     /**
-     * **某个块的区间文案**（周视图时间轴每一行用）：`9:00~10:20`。
+     * **某个块的区间文案**（周视图时间轴每一行用）：`9:00~10:20`；时刻未知返回空串。
      *
      * @param blockIndex 0 起的块序号（0 = 第 1-2 节）
      */
-    fun blockRangeLabel(blockIndex: Int): String =
-        blockRanges.getOrNull(blockIndex)?.let { (start, end) -> "$start~$end" }.orEmpty()
+    fun blockRangeLabel(blockIndex: Int): String {
+        val start = blockStartTime(blockIndex)
+        val end = blockEndTime(blockIndex)
+        return if (start.isBlank() || end.isBlank()) "" else "$start~$end"
+    }
 
     /**
-     * 某个块的**开始时刻**（周视图时间轴的第一行，如 `9:00`）；越界返回空串。
+     * 某个块的**开始时刻**（周视图时间轴的第一行，如 `9:00`）；越界或未知返回空串。
      *
      * 时间轴上的时刻刻意分两行写（开始在上面、结束在下面），而不是
      * [blockRangeLabel] 那种 `9:00~10:20` 的区间写法：七列平分屏幕后左轴只有 40dp 上下，
      * 区间写法会被省略号截断（"时间显示不全"）。拆开以后每行都短，两行都完整。
      */
-    fun blockStartTime(blockIndex: Int): String =
-        blockRanges.getOrNull(blockIndex)?.first.orEmpty()
+    fun blockStartTime(blockIndex: Int): String = timetable.startOfBlock(blockIndex)
 
-    /** 某个块的**结束时刻**（周视图时间轴的最后一行，如 `10:20`）；越界返回空串 */
-    fun blockEndTime(blockIndex: Int): String =
-        blockRanges.getOrNull(blockIndex)?.second.orEmpty()
-
-    /** 块数（= 周视图的行数上限）：16 节 → 8 行 */
-    val BLOCK_COUNT: Int get() = blockRanges.size
+    /** 某个块的**结束时刻**（周视图时间轴的最后一行，如 `10:20`）；越界或未知返回空串 */
+    fun blockEndTime(blockIndex: Int): String = timetable.endOfBlock(blockIndex)
 
     /** 第 [period] 节落在第几个块（0 起）；越界则夹到最近的块 */
-    fun blockIndexOf(period: Int): Int =
-        ((period.coerceAtLeast(1) - 1) / PERIODS_PER_BLOCK).coerceAtMost(blockRanges.lastIndex)
-
-    /** `9:00` → LocalTime；解析不出返回 null（脏数据不让页面崩） */
-    private fun parseTime(text: String): java.time.LocalTime? = runCatching {
-        java.time.LocalTime.parse(text.padStart(5, '0'))
-    }.getOrNull()
-
-    /** LocalTime → `9:40`（**不补前导零**，与 [blockRanges] 的写法保持一致） */
-    private fun formatTime(time: java.time.LocalTime): String =
-        "${time.hour}:%02d".format(time.minute)
+    fun blockIndexOf(period: Int): Int = timetable.blockIndexOf(period)
 
     private var nextId = 1L
 

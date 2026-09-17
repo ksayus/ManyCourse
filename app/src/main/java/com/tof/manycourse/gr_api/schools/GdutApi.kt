@@ -8,6 +8,7 @@ import com.tof.manycourse.data.School
 import com.tof.manycourse.data.SchoolCourse
 import com.tof.manycourse.data.SchoolWeek
 import com.tof.manycourse.data.StudentProfile
+import com.tof.manycourse.data.Timetables
 import com.tof.manycourse.gr_api.LoginCaptcha
 import com.tof.manycourse.gr_api.LoginResult
 import com.tof.manycourse.gr_api.SchoolApi
@@ -109,6 +110,12 @@ class GdutApi : SchoolApi, WeekScheduleApi {
         name = "广东工业大学",
         baseUrl = "https://jxfw.gdut.edu.cn",
         system = "教学管理系统（统一身份认证 CAS 登录 + 课表查询）",
+        // ★ 广工**一天 14 节**（7 个两节块），不是默认那张 16 节的表：
+        //   它自己的课表页渲染的就是「第01节 … 第14节」14 行（抓包原文见
+        //   `web_fetch/gdut_extract/244_…xsAllKbList…res.txt`）。用默认表会多出
+        //   不存在的第 15-16 节（"添加课程"能选到、脏数据也被夹到 16 而不是 14）。
+        //   时刻暂时为空（那次抓包只有节数、没有作息）—— 时间轴因此只画「第N-M节」。
+        timetable = Timetables.gdut,
     )
 
     override val configured = true

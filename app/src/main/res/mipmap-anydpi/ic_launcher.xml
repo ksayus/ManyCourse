@@ -1,6 +1,15 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+  自适应图标（方形/圆角遮罩走这一份，与 ic_launcher_round.xml 同内容）。
+  前景是 mipmap-*dpi/ic_launcher_foreground.png，由 tools/make_launcher_icons.ps1
+  从 tools/icon/many_course_icon.ico 生成：满幅设计图缩到 108dp，四角用放大 1.4 倍的
+  自己垫底，避免被方形遮罩切出透明缺口。
+
+  没有 <monochrome>：主题图标（Android 13+）要求那一层是单色剪影，而这张图标是
+  白卡片 + 网格文字的多色整图，拿它当剪影会糊成一个实心方块。宁可让主题图标
+  回退到彩色图标，也不要一块认不出来的色块。要支持的话得让设计单独出一张剪影。
+-->
 <adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
     <background android:drawable="@drawable/ic_launcher_background" />
-    <foreground android:drawable="@drawable/ic_launcher_foreground" />
-    <monochrome android:drawable="@drawable/ic_launcher_foreground" />
+    <foreground android:drawable="@mipmap/ic_launcher_foreground" />
 </adaptive-icon>

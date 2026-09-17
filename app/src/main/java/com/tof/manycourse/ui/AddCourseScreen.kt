@@ -204,10 +204,13 @@ fun AddCourseScreen(
 
                 Spacer(Modifier.height(16.dp))
 
-                // 实时计算预览：周几 · 第几节 · 几点上课
+                // 实时计算预览：周几 · 第几节 ·（有时刻表才写）几点上课。
+                // 广工这类还没拿到作息的学校只写节次 —— 不编一个"9:00 上课"出来
                 val endPeriod = (startPeriod + periodCount - 1).coerceAtMost(CourseRepository.MAX_PERIOD)
+                val startTime = CourseRepository.periodTime(startPeriod)
                 Text(
-                    text = "${weekdayLabel(weekday)} · 第${startPeriod}-${endPeriod}节 · ${CourseRepository.periodTime(startPeriod)} 上课",
+                    text = "${weekdayLabel(weekday)} · 第${startPeriod}-${endPeriod}节" +
+                        startTime.takeIf { it.isNotBlank() }?.let { " · $it 上课" }.orEmpty(),
                     fontSize = 12.sp,
                     color = accent,
                 )

@@ -17,6 +17,21 @@
     -->
     <uses-permission android:name="android.permission.INTERNET" />
 
+    <!--
+      校园地图页要"按定位挑校区"（广工有 5 个校区，每个校区一张图）。
+
+      为什么**两条都要声明**：
+        - `ACCESS_COARSE_LOCATION`（大致位置）：Android 12 起用户在弹窗里可以只给"大致位置"，
+          只声明 FINE 的话，那种情况下系统不会把任何位置给到我们；
+        - `ACCESS_FINE_LOCATION`（精确位置）：声明了它，弹窗里才**同时**给"精确/大致"两个选项。
+      两条都是**危险权限**：运行时还要在 `ui/MapScreen.kt` 里申请，用户不给也能用
+      （默认显示主校区地图 + 手动切换校区，见 MapScreen 的状态机）。
+
+      刻意**不声明** `ACCESS_BACKGROUND_LOCATION`：本应用只在地图页前台取一次定位。
+    -->
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+
     <application
         android:name=".ManyCourseApp"
         android:allowBackup="true"
