@@ -1,9 +1,7 @@
 # ─────────────────────────────────────────────────────────────────────────────
-#  注意：本工作流使用 GitHub Pages 部署下载页。为了让 configure-pages 自动
-#  启用 Pages，需要创建一个 Personal Access Token (PAT) 并保存为仓库 Secret
-#  `PAGES_TOKEN`（权限：repo 或 pages:write）。如果不想创建 PAT，请手动进入
-#  仓库 Settings → Pages → Source 选择 "GitHub Actions"，然后删除 configure-pages
-#  步骤中的 enablement 和 token 参数。
+#  重要：使用前请手动启用 GitHub Pages
+#  进入仓库 Settings → Pages → Source，选择 "GitHub Actions"。
+#  这样 configure-pages 就不需要 Personal Access Token 了。
 # ─────────────────────────────────────────────────────────────────────────────
 
 name: Android CI/CD
@@ -71,13 +69,11 @@ jobs:
         uses: gradle/actions/setup-gradle@v4
 
       # 安装 Android SDK 所需包（compileSdk 37 / build-tools 36）
+      # 注意：packages 必须是单行、空格分隔的字符串，不能使用多行 YAML 块
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
         with:
-          packages: |
-            platform-tools
-            platforms;android-37
-            build-tools;36.0.0
+          packages: 'platform-tools platforms;android-37 build-tools;36.0.0'
 
       - name: Show toolchain versions
         run: |
@@ -153,14 +149,11 @@ jobs:
       - name: Set up Gradle (with cache)
         uses: gradle/actions/setup-gradle@v4
 
-      # 安装 Android SDK 所需包（compileSdk 37 / build-tools 36）
+      # 安装 Android SDK 所需包（单行、空格分隔）
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
         with:
-          packages: |
-            platform-tools
-            platforms;android-37
-            build-tools;36.0.0
+          packages: 'platform-tools platforms;android-37 build-tools;36.0.0'
 
       - name: Grant execute permission for gradlew
         run: chmod +x gradlew
@@ -293,11 +286,9 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      # 不需要 enablement / token，因为我们已经手动在仓库设置中启用了 Pages
       - name: Configure Pages
         uses: actions/configure-pages@v5
-        with:
-          enablement: true
-          token: ${{ secrets.PAGES_TOKEN }}
 
       # 只发布静态页，别把任何构建目录带走（仓库根作为站点根，index.html 直接可访问）
       - name: Prune build outputs
