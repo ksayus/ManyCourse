@@ -46,6 +46,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
@@ -69,6 +70,8 @@ import com.tof.manycourse.data.DeviceLocation
 import com.tof.manycourse.data.MapAnchor
 import com.tof.manycourse.data.MapPoint
 import com.tof.manycourse.data.MapPointStore
+import com.tof.manycourse.data.PlaceFix
+import com.tof.manycourse.data.PlaceVerdict
 import com.tof.manycourse.data.SchoolCampus
 import com.tof.manycourse.data.SchoolMap
 import com.tof.manycourse.data.UiSettings
@@ -78,8 +81,11 @@ import com.tof.manycourse.data.coursesOfDate
 import com.tof.manycourse.data.imagePlacementOf
 import com.tof.manycourse.data.isInsideImage
 import com.tof.manycourse.data.locateByWifi
+import com.tof.manycourse.data.nearestPlaceByGround
+import com.tof.manycourse.data.nearestPlaceByImage
 import com.tof.manycourse.data.pickCampus
 import com.tof.manycourse.data.placeCoursesOnMap
+import com.tof.manycourse.data.placeNoteOf
 import com.tof.manycourse.data.projectToImage
 import com.tof.manycourse.data.scanWifiOnce
 import com.tof.manycourse.gr_api.SchoolRegistry
@@ -288,6 +294,51 @@ fun MapScreen(
 
     val myMarker = gpsMarker ?: wifiMarker
 
+    /**
+     * ★ **「我在哪栋楼」** —— 把位置估算**收敛到一个已知地点**，而不是画一个精确的点。
+     *
+     * 两条来源各用各的数据，都挑**最不吃标定误差**的那条（细节见 `data/PlaceLocator.kt`）：
+     *  - **GPS**：拿手机经纬度直接和地点的**真实经纬度**比距离 —— 标定**完全不参与**。
+     *    这一点是整件事成立的关键：地图只是一张图片，标定残差实测有几十米，
+     *    而"哪栋楼"是个离散问题，只要误差小于楼间距的一半就不影响答案；
+     *    把标定从这条路上摘掉，精度立刻就够用了（蓝点画得准不准另说）。
+     *  - **Wi-Fi**：指纹和地点都只有图上坐标，只能在图上比。
+     *
+     * 认不出来时（没有地点数据 / 最近的也在 150 m 外 / 两个候选分不出来）如实返回
+     * null 或 `Ambiguous` —— 在"哪栋楼"这个问题上给一个错答案，比说"分不出来"糟得多。
+     */
+    val places = MapPointStore.pointsOf(campus?.id)
+    val gpsFix = location
+    val wifi = wifiFix
+    val placeFix: PlaceFix? = when {
+        gpsFix != null -> nearestPlaceByGround(gpsFix.latitude, gpsFix.longitude, places)
+        wifi != null -> nearestPlaceByImage(wifi.imageX, wifi.imageY, places, calibration)
+        else -> null
+    }
+
+    /** 认准了才把那个地点圈出来：分不出来的时候圈一个，等于替用户做了个可能错的选择 */
+    val placeMarker = placeFix
+        ?.takeIf { it.verdict != PlaceVerdict.Ambiguous }
+        ?.let { fix -> imagePlacementOf(fix.point, calibration)?.let { placement -> fix to placement } }
+        ?.takeIf { (_, placement) -> isInsideImage(placement.first, placement.second) }
+        ?.let { (_, placement) ->
+            MapMarker(placement.first, placement.second, "", MapMarkerKind.PlaceMatch, tokens.accent)
+        }
+
+    /**
+     * ★ 界面上**最该先回答**的那句话：我在哪栋楼。
+     *
+     * 措辞与"敢说到哪一步"全在纯函数 `placeNoteOf` 里（可单测）；这里只负责喂数据。
+     * 它排在"蓝点是怎么来的"前面 —— 蓝点画在哪儿是过程，"你在图书馆"才是结论。
+     */
+    val placeNote = placeNoteOf(
+        fix = placeFix,
+        hasPosition = myMarker != null,
+        hasPlaces = places.isNotEmpty(),
+        // Wi-Fi 估算降一档说法（指纹库现在全是室外走出来的，见 data/PlaceLocator.kt）
+        precise = gpsFix != null,
+    )
+
     // 室内没有 GPS 时才去扫一次 Wi-Fi（这个校区**已经有指纹**才有意义）——
     // 否则白扫一次，还占掉一次被系统节流的扫描机会
     LaunchedEffect(campus?.id, visible, location, calibration) {
@@ -474,7 +525,7 @@ fun MapScreen(
                     ZoomableMap(
                         resId = campus.drawableRes,
                         description = "${school?.name.orEmpty()}${campus.name}地图",
-                        markers = markers,
+                        markers = placeMarker?.let { markers + it } ?: markers,
                         myLocation = myMarker,
                         // 只有"正在等你点图"时才让点击去采点，平时点一下什么也不做
                         // （双击复位仍随时可用，见 ZoomableMap）
@@ -494,6 +545,7 @@ fun MapScreen(
             onSwitchCampus = { manualCampusId = it },
             hasCalibration = calibration != null,
             devMode = devMode,
+            placeNote = placeNote,
             myLocationNote = myLocationNote,
         )
 
@@ -701,8 +753,9 @@ internal data class MapMarker(
     val color: Color,
 )
 
-/** 标记的三种画法：课程（带序号的实心圆）/ 采集点位（小点）/ 我在这儿（蓝点 + 光圈）*/
-internal enum class MapMarkerKind { Course, Point, MyLocation }
+/** 标记的四种画法：课程（带序号的实心圆）/ 采集点位（小点）/ 我在这儿（蓝点 + 光圈）/
+ *  **认出来的地点**（虚线圈 —— 就是"你在哪栋楼"的那栋）*/
+internal enum class MapMarkerKind { Course, Point, MyLocation, PlaceMatch }
 
 /**
  * 可缩放拖动的图片：`graphicsLayer` 做缩放位移，`transformable` 收手势。
@@ -898,6 +951,19 @@ private fun MarkerOverlay(
                     drawCircle(marker.color, radius = 4.dp.toPx(), center = center)
                 }
 
+                // 「你在哪栋楼」认出来的那栋：画一个**圈**把它框出来。
+                // 不填实色 —— 底图上的楼名、路名要能看见；也不写名字 —— 名字在下面那句话里，
+                // 画在图上会和底图自己的字重叠。
+                MapMarkerKind.PlaceMatch -> {
+                    drawCircle(marker.color.copy(alpha = 0.16f), radius = 17.dp.toPx(), center = center)
+                    drawCircle(
+                        color = marker.color,
+                        radius = 17.dp.toPx(),
+                        center = center,
+                        style = Stroke(width = 2.5.dp.toPx()),
+                    )
+                }
+
                 MapMarkerKind.MyLocation -> Unit
             }
         }
@@ -930,6 +996,13 @@ private fun TodayCourseMapLegend(
     onSwitchCampus: (String) -> Unit,
     hasCalibration: Boolean,
     devMode: Boolean,
+    /**
+     * ★ **「我在哪栋楼」** —— 这一页最该先回答的那句话；null = 认不出来（原因已写在文案里）。
+     *
+     * 单独一个参数、单独一行、用主要色：它和下面那些"说明"不是一个层级的东西 ——
+     * 蓝点画在哪、缺定位还是缺标定，都是**过程**；"你在图书馆"才是用户要的**结论**。
+     */
+    placeNote: String?,
     /** 「我在这儿」那句话（含"为什么没画出来"）；null = 什么都不用说 */
     myLocationNote: String?,
 ) {
@@ -954,6 +1027,19 @@ private fun TodayCourseMapLegend(
             lineHeight = 16.sp,
             color = MaterialTheme.colorScheme.onSurface,
         )
+
+        // ★ 「我在哪栋楼」：主要色 + 13sp + 半粗，压在"今日课程"之上 ——
+        // 打开地图最想知道的就是这一句，不该和一堆 11sp 的说明挤在一起
+        placeNote?.let {
+            Text(
+                text = it,
+                fontSize = 13.sp,
+                lineHeight = 18.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.onSurface,
+                modifier = Modifier.padding(top = 4.dp),
+            )
+        }
 
         // 蓝点状态：GPS 不行时会退到 Wi-Fi 指纹，两样都不行就说清缺的是哪一样
         myLocationNote?.let { HintLine(text = it) }

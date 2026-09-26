@@ -120,25 +120,3 @@ object SchoolMap {
     fun nearestCampus(schoolId: String?, latitude: Double, longitude: Double): SchoolCampus? =
         campusesOf(schoolId).minByOrNull { distanceMeters(latitude, longitude, it.latitude, it.longitude) }
 }
-
-/**
- * 两点间的**近似距离**（米）。
- *
- * 用等距圆柱近似（把经纬度当平面算，经度按纬度收紧）而不是 Haversine：
- * 这里唯一的用途是"挑最近的校区"，校区之间隔着几公里到几百公里，
- * 这个近似的误差（<1%）比那个量级小两三个数量级 —— 不值得为它多写一段三角函数。
- *
- * @return 距离（米）；同一个点返回 0
- */
-internal fun distanceMeters(
-    latitude1: Double,
-    longitude1: Double,
-    latitude2: Double,
-    longitude2: Double,
-): Double {
-    val earthRadius = 6_371_000.0
-    val meanLatitude = Math.toRadians((latitude1 + latitude2) / 2)
-    val deltaLatitude = Math.toRadians(latitude2 - latitude1)
-    val deltaLongitude = Math.toRadians(longitude2 - longitude1) * kotlin.math.cos(meanLatitude)
-    return earthRadius * kotlin.math.hypot(deltaLatitude, deltaLongitude)
-}

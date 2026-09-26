@@ -96,13 +96,19 @@ fun main(args: Array<String>) {
     // ── 标定：锚点 → 每个校区一份 ──────────────────────────────────────────
     say("")
     say("=== 标定 ===")
-    val anchors = prepareAnchors(source.anchors, say)
+    val prep = prepareAnchors(source.anchors, say)
+    val anchors = prep.anchors
     val calibrationByCampus = LinkedHashMap<String, MapCalibration?>()
     anchors.groupBy { it.campusId }.toSortedMap().forEach { (campusId, ofCampus) ->
         val calibration = buildCalibration(ofCampus)
         calibrationByCampus[campusId] = calibration
         describeCalibration(campusId, ofCampus, calibration, say)
     }
+
+    // ── 地点："我在哪栋楼"的候选 ───────────────────────────────────────────
+    say("")
+    say("=== 地点（\"我在哪栋楼\"按真实经纬度比距离用这些）===")
+    val places = placesFromAnchors(anchors, prep.contestedNames, say)
 
     // ── 轨迹融合 ──────────────────────────────────────────────────────────
     say("")
@@ -125,14 +131,14 @@ fun main(args: Array<String>) {
     // ── 合并 ──────────────────────────────────────────────────────────────
     say("")
     say("=== 合并 ===")
-    val points = mergePoints(source.points, fixes, say)
+    val points = mergePoints(source.points, fixes, places, say)
     val fingerprints = mergeFingerprints(source.fingerprints, fusedFingerprints, say)
 
     say("")
     say("=== 汇总 ===")
     say("  点位 ${points.size} 个 · 锚点 ${anchors.size} 个 · Wi-Fi 指纹 ${fingerprints.size} 条")
     points.groupBy { it.campusId }.toSortedMap().forEach { (campus, list) ->
-        say("    $campus：点位 ${list.size} 个")
+        say("    $campus：点位 ${list.size} 个（" + list.joinToString("、") { it.name } + "）")
     }
     fingerprints.groupBy { it.campusId }.toSortedMap().forEach { (campus, list) ->
         val aps = list.map { it.aps.size }
@@ -315,12 +321,24 @@ private fun readSource(dir: File): Source {
 // ── 锚点与标定 ────────────────────────────────────────────────────────────
 
 /**
+ * 锚点清理的结果。
+ *
+ * @param anchors 能拿去算标定的锚点
+ * @param contestedNames **坐标是"撞车"来的**那些锚点的名字 —— 标定还能用它们（最小二乘会把
+ *   矛盾摊平），但它们**不能拿来当地名**：见 [placesFromAnchors]
+ */
+private class AnchorPrep(
+    val anchors: List<MapAnchor>,
+    val contestedNames: Set<String>,
+)
+
+/**
  * 锚点进库前的两步清理：**去重名** + **拆坐标撞车**。
  *
  * 两步都只做"数据自己就自相矛盾"的那部分，不动任何"只是不太准"的锚点 ——
  * 准不准是 GPS 的事，矛盾不矛盾是数据的事，后者可以机械地判定，前者不行。
  */
-private fun prepareAnchors(raw: List<MapAnchor>, say: (String) -> Unit): List<MapAnchor> {
+private fun prepareAnchors(raw: List<MapAnchor>, say: (String) -> Unit): AnchorPrep {
     // 1) 同校区 + 同名 = 同一个人地方（和 MapPointStore 判同的口径一致），只留一条
     val byName = LinkedHashMap<String, MapAnchor>()
     var duplicateNames = 0
@@ -330,10 +348,12 @@ private fun prepareAnchors(raw: List<MapAnchor>, say: (String) -> Unit): List<Ma
     if (duplicateNames > 0) say("  锚点里有 $duplicateNames 条同校区重名，只留了第一条")
 
     // 2) 坐标撞车：同一个经纬度不可能同时属于两个不同的地点，逐校区拆
-    return byName.values
+    val contested = mutableSetOf<String>()
+    val anchors = byName.values
         .groupBy { it.campusId }
         .toSortedMap()
-        .flatMap { (campusId, ofCampus) -> resolveContradictions(campusId, ofCampus, say) }
+        .flatMap { (campusId, ofCampus) -> resolveContradictions(campusId, ofCampus, contested, say) }
+    return AnchorPrep(anchors, contested)
 }
 
 /**
@@ -356,10 +376,16 @@ private fun prepareAnchors(raw: List<MapAnchor>, say: (String) -> Unit): List<Ma
  *
  * 参照标定算不出来（不撞车的锚点不足 2 个）时**一个都不删**：宁可标定差一点，
  * 也不能在没有依据的情况下丢掉用户采的数据。
+ *
+ * ★ **撞过车的锚点（包括留下的那个）都会记进 [contested]**：留下的那个只是"图上位置
+ * 更自洽"，并不等于"这个经纬度就属于它" —— 一个坐标被两个地点认领过，
+ * 到底是谁的**无从判断**。标定用不着分清（最小二乘只关心整体一致性），
+ * 但[placesFromAnchors]要用来回答"这是哪栋楼"，那就必须分得清 —— 所以宁可不当地名。
  */
 private fun resolveContradictions(
     campusId: String,
     anchors: List<MapAnchor>,
+    contested: MutableSet<String>,
     say: (String) -> Unit,
 ): List<MapAnchor> {
     val groups = anchors.groupBy { "%.7f,%.7f".format(it.latitude, it.longitude) }
@@ -386,10 +412,63 @@ private fun resolveContradictions(
             say("      ✗ 去「${anchor.name}」：偏 ${error.toInt()} m，且和「${best.name}」共用坐标 " +
                 "%.7f,%.7f".format(anchor.latitude, anchor.longitude))
         }
+        // 整组都算"坐标归属不明"：留下的那个也一样（见函数注释末尾）
+        group.forEach { contested += it.name }
         kept += best
     }
     say("    （撞车的锚点多半是连着采时定位没刷新 —— 建议到开发者模式里删掉重采）")
     return kept
+}
+
+/**
+ * 从锚点里挑出**可以当地名用**的那些，生成点位（`p=` 行）—— 这是"我在哪栋楼"的候选名单。
+ *
+ * ## 为什么锚点能当地名
+ *
+ * 一个锚点本来就是"**图上某个位置 ↔ 一个已知的真实坐标**"，而一个点位要的正是
+ * "名字 + 图上位置 + 真实坐标" —— 两者是同一份东西，只是用途不同（一个拿去算标定，
+ * 一个拿去回答"我在哪栋楼"、顺便让课表里的教室名能匹配上）。
+ *
+ * ## 为什么"撞过车"的锚点不能当地名
+ *
+ * 这是这一步唯一需要判断的地方，而且判断得很保守：**只要一个坐标被两个地点认领过，
+ * 就不再拿它当名字**（见 [resolveContradictions]）。理由是这个功能的失败方式特别糟：
+ * 标定歪了只是"点画偏了"，而地名错了是"**界面明确告诉你一个错误的事实**" ——
+ * 用户会照着它走错方向。所以宁可少给几个候选（少 2 个地点照样能用），
+ * 也不能给出一个不知道属于谁的名字。重采一次就能补回来。
+ */
+private fun placesFromAnchors(
+    anchors: List<MapAnchor>,
+    contestedNames: Set<String>,
+    say: (String) -> Unit,
+): List<MapPoint> {
+    val usable = anchors.filter { it.name !in contestedNames }
+    val calibrationOnly = anchors.filter { it.name in contestedNames }
+
+    if (usable.isEmpty()) {
+        say("  一个都没有（所有锚点的坐标都撞过车，或者压根没有锚点）")
+    } else {
+        say("  ${usable.size} 个：" + usable.joinToString("、") { it.name })
+    }
+    if (calibrationOnly.isNotEmpty()) {
+        say("  ${calibrationOnly.size} 个只当标定用、**不当地名**：" +
+            calibrationOnly.joinToString("、") { it.name })
+        say("    （它们的坐标和另一个地点撞过车，说不准属于谁 —— 重采一次就能当地名用）")
+    }
+
+    return usable.map { anchor ->
+        MapPoint(
+            id = "anchor-${anchor.campusId}-${anchor.name}",
+            campusId = anchor.campusId,
+            name = anchor.name,
+            latitude = anchor.latitude,
+            longitude = anchor.longitude,
+            imageX = anchor.imageX,
+            imageY = anchor.imageY,
+            note = "由标定锚点生成：图上位置 + 真实坐标，\"我在哪栋楼\"按真实经纬度比距离用它",
+            createdAt = 0L,
+        )
+    }
 }
 
 /**
@@ -498,9 +577,14 @@ private fun duration(millis: Long): String {
  * 而图上采的点是零误差的（人点的），所以后者的 `accuracyMeters` 为 null 时不该被顶掉 ——
  * 下面按 `accuracyMeters` 升序取最小，null 视为"零误差"排最前。
  */
-private fun mergePoints(own: List<MapPoint>, fused: List<MapPoint>, say: (String) -> Unit): List<MapPoint> {
+private fun mergePoints(
+    own: List<MapPoint>,
+    fused: List<MapPoint>,
+    places: List<MapPoint>,
+    say: (String) -> Unit,
+): List<MapPoint> {
     val byKey = LinkedHashMap<String, MapPoint>()
-    (own + fused).forEach { point ->
+    (own + fused + places).forEach { point ->
         val key = "${point.campusId}|${normalizePlace(point.name)}"
         val previous = byKey[key]
         if (previous == null) {
@@ -512,7 +596,8 @@ private fun mergePoints(own: List<MapPoint>, fused: List<MapPoint>, say: (String
             say("  同名点位「${point.name}」留了误差更小的那条（${describeError(previous)} ≤ ${describeError(point)}）")
         }
     }
-    say("  点位：设备采的 ${own.size} 个 + 轨迹融合的 ${fused.size} 个 → 去重后 ${byKey.size} 个")
+    say("  点位：设备采的 ${own.size} 个 + 轨迹融合的 ${fused.size} 个 + 由锚点生成的地点 ${places.size} 个" +
+        " → 去重后 ${byKey.size} 个")
     return byKey.values.toList()
 }
 
