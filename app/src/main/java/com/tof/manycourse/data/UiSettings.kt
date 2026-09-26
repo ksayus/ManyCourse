@@ -18,6 +18,7 @@ object UiSettings {
     private const val KEY_GLASS_MODE = "glass_mode"
     private const val KEY_NOTIFICATIONS = "notifications_enabled"
     private const val KEY_CALENDAR_GRID = "calendar_grid_layout"
+    private const val KEY_DIM_ON_HOLIDAYS = "dim_on_holidays"
     private const val KEY_DEV_MODE = "dev_mode"
     private const val KEY_AUTO_UPDATE = "auto_update_check"
     private const val KEY_UPDATE_SOURCE = "update_source"
@@ -40,6 +41,23 @@ object UiSettings {
      * 所以老用户升级后应当看到和以前一模一样的日历，而不是被换掉一张不认识的页面。
      */
     val calendarGridLayout = mutableStateOf(false)
+
+    /**
+     * **节假日自动置灰**开关（默认开）。
+     *
+     * 打开时，法定放假日（见 [HolidayCalendar]）那天的课**照旧列在课表上，但一门都不点亮**
+     * （灰着显示，见 [dayIsLit]）。调休上班日照常点亮，只把日子标出来。
+     *
+     * 为什么是"置灰"而不是"删掉"：把课从数据里拿掉的话，课程卡片会直接消失，
+     * 用户看到的是"课表空了" —— 分不清是放假、还是同步挂了、还是自己没选课。
+     * 灰着则一眼就知道"这天排了课、但今天不上"，与周视图那条
+     * 「亮 = 本周会上 · 灰 = 本周不上」是同一套语言。
+     *
+     * 为什么给开关而不是写死：这是**唯一一处 App 覆盖教务系统课表的地方**。
+     * 万一学校真有假期补课、或者用户就想让放假当天和平时长得一样，得有个开关能退回去。
+     * 默认开着是因为用户要的就是"自动" —— 不需要他去设置里点一下。
+     */
+    val dimOnHolidays = mutableStateOf(true)
 
     /**
      * **开发者模式**开关：打开后地图页多出一套"点位采集 / 标定 / 数据导出"工具。
@@ -81,6 +99,7 @@ object UiSettings {
         glassMode.value = GlassMode.fromKey(p.getString(KEY_GLASS_MODE, null))
         notificationsEnabled.value = p.getBoolean(KEY_NOTIFICATIONS, true)
         calendarGridLayout.value = p.getBoolean(KEY_CALENDAR_GRID, false)
+        dimOnHolidays.value = p.getBoolean(KEY_DIM_ON_HOLIDAYS, true)
         devMode.value = p.getBoolean(KEY_DEV_MODE, false)
         autoUpdateCheck.value = p.getBoolean(KEY_AUTO_UPDATE, true)
         updateSource.value = UpdateSourcePreference.fromKey(p.getString(KEY_UPDATE_SOURCE, null))
@@ -106,6 +125,13 @@ object UiSettings {
         if (calendarGridLayout.value == enabled) return
         calendarGridLayout.value = enabled
         prefs?.edit()?.putBoolean(KEY_CALENDAR_GRID, enabled)?.apply()
+    }
+
+    /** 「节假日自动置灰」开关，持久化。切换后课表页 / 日历页当场重组生效 */
+    fun setDimOnHolidays(enabled: Boolean) {
+        if (dimOnHolidays.value == enabled) return
+        dimOnHolidays.value = enabled
+        prefs?.edit()?.putBoolean(KEY_DIM_ON_HOLIDAYS, enabled)?.apply()
     }
 
     /** 开发者模式开关，持久化 */

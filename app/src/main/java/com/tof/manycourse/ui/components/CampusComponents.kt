@@ -96,6 +96,8 @@ fun CourseCard(
     metaText: String? = null,
     onClick: (() -> Unit)? = null,
     onLongClick: (() -> Unit)? = null,
+    /** true = **不亮**：课照旧列在这里，但今天不上（放假那天）—— 见 [dimTitle] */
+    dim: Boolean = false,
 ) = CourseCard(
     name = course.name,
     room = course.room,
@@ -106,6 +108,7 @@ fun CourseCard(
     metaText = metaText ?: course.periodLabel,
     onClick = onClick,
     onLongClick = onLongClick,
+    dim = dim,
 )
 
 /**
@@ -118,6 +121,7 @@ fun CourseCard(
  * @param onClick 点击卡片 → 打开课程详情浮层
  * @param onLongClick 只有本地课（[CourseEntry.Local]）才该传 —— 教务系统按周给的课
  *   删不掉（下次查还会回来），给它删除入口只会让用户以为删掉了。
+ * @param dim true = 这一门**不亮**（放假那天：课照旧列出，但今天不上）
  */
 @Composable
 fun CourseCard(
@@ -127,6 +131,7 @@ fun CourseCard(
     metaText: String? = null,
     onClick: (() -> Unit)? = null,
     onLongClick: (() -> Unit)? = null,
+    dim: Boolean = false,
 ) = when (course) {
     is CourseEntry.Week -> CourseCard(
         name = course.course.name,
@@ -138,6 +143,7 @@ fun CourseCard(
         metaText = metaText ?: course.periodLabel,
         onClick = onClick,
         onLongClick = onLongClick,
+        dim = dim,
     )
 
     is CourseEntry.Local -> CourseCard(
@@ -147,6 +153,7 @@ fun CourseCard(
         metaText = metaText,
         onClick = onClick,
         onLongClick = onLongClick,
+        dim = dim,
     )
 }
 
@@ -165,6 +172,11 @@ fun CourseCard(
  * 按下反馈改成卡片**轻微缩到 98%**：有反馈、又没有那层灰。
  *
  * @param accent 左侧强调条的底色，用 `CourseRepository.colorOfName(课名)` 取
+ * @param dim **不亮**：这一门今天不上（放假那天）。课**照旧列在课表上**，只是整张卡
+ *   走灰调 —— 强调条去掉颜色、文字压暗。为什么不是"不显示"：卡片一消失，
+ *   用户看到的是"课表空了"，分不清是放假、同步挂了、还是自己没选课；
+ *   灰着则一眼就知道"这天排了课、但今天不上"（与周视图那条
+ *   「亮 = 本周会上 · 灰 = 本周不上」是同一套语言）。
  * @param onClick 点击 → 打开详情；传 null 时卡片不可点
  */
 @OptIn(ExperimentalFoundationApi::class)
@@ -179,6 +191,7 @@ fun CourseCard(
     metaText: String? = null,
     onClick: (() -> Unit)? = null,
     onLongClick: (() -> Unit)? = null,
+    dim: Boolean = false,
 ) {
     val shape = RoundedCornerShape(12.dp)
     val interactionSource = remember { MutableInteractionSource() }
@@ -188,6 +201,19 @@ fun CourseCard(
         animationSpec = tween(durationMillis = 120),
         label = "cardPressScale",
     )
+    // 「不亮」的三处灰调：强调条去色、标题压暗、副行更淡。
+    // 玻璃底与布局一个字不改 —— 亮与不亮是**同一张卡的两个面貌**，位置与大小完全一致
+    val accentTint = if (dim) MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.45f) else accent
+    val titleColor = if (dim) {
+        MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
+    } else {
+        MaterialTheme.colorScheme.onSurface
+    }
+    val subColor = if (dim) {
+        MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.55f)
+    } else {
+        MaterialTheme.colorScheme.onSurfaceVariant
+    }
     Row(
         modifier = modifier
             .fillMaxWidth()
@@ -208,12 +234,12 @@ fun CourseCard(
                 onLongClick = onLongClick,
             ),
     ) {
-        // 左侧强调条（颜色按课程名哈希实时计算）
+        // 左侧强调条（颜色按课程名哈希实时计算；不亮时去色）
         Box(
             Modifier
                 .width(if (highlighted) CardAccentWidthHighlighted else CardAccentWidth)
                 .fillMaxHeight()
-                .background(accent)
+                .background(accentTint)
         )
         Column(
             Modifier
@@ -225,7 +251,7 @@ fun CourseCard(
                 fontSize = 16.sp,
                 fontWeight = FontWeight.SemiBold,
                 lineHeight = 22.sp,
-                color = MaterialTheme.colorScheme.onSurface,
+                color = titleColor,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
@@ -234,14 +260,14 @@ fun CourseCard(
                 Icon(
                     imageVector = AppIcons.Clock,
                     contentDescription = null,
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    tint = subColor,
                     modifier = Modifier.size(16.dp),
                 )
                 Spacer(Modifier.width(6.dp))
                 Text(
                     text = listOf(startTime, room).filter { it.isNotBlank() }.joinToString(" · "),
                     fontSize = 15.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    color = subColor,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
@@ -251,7 +277,7 @@ fun CourseCard(
                 text = metaText.orEmpty(),
                 fontSize = 12.sp,
                 lineHeight = 18.sp,
-                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.85f),
+                color = subColor.copy(alpha = 0.85f),
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )

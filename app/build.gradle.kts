@@ -27,9 +27,9 @@ android {
 
         // 第一个版本位是大版本,比如重构UI界面,增加重大功能
         // 第二个版本位是小版本更新,比如添加功能,数字增加的量代表新功能的数量
-        // 第三个版本位是Bug修复,数字代表已经修复的Bug数量
+        // 第三个版本位是Bug修复,以及软件优化,数字代表已经修复的Bug和优化功能的数量
         // 第四个版本位是支持的学校数量
-        versionName = providers.gradleProperty("versionName").orNull ?: "1.3.1.3"
+        versionName = providers.gradleProperty("versionName").orNull ?: "1.3.4.3"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }

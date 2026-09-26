@@ -39,6 +39,7 @@ import com.tof.manycourse.data.WeekScheduleStore
 import com.tof.manycourse.data.WeekdayLabels
 import com.tof.manycourse.data.coursesOfDate
 import com.tof.manycourse.data.dateOfCurrentWeek
+import com.tof.manycourse.data.dayIsLit
 import com.tof.manycourse.data.nextCourseKey
 import com.tof.manycourse.data.weekdayLabel
 import com.tof.manycourse.data.ScheduleCache
@@ -128,6 +129,12 @@ fun ScheduleScreen(
         // 让"两页看的是同一周"这件事一眼可见
         WeekLabel()
 
+        // 节假日提示：放假那天**课表照旧列出当天的课，但一门都不点亮**（灰着），
+        // 不说一句"今天放假"的话，用户会以为这些课照常上
+        // ★ 放在门数那行**上面**、且自成一行：门数那行的文案（`周X · N 门课程`）
+        //   被真机测试 ScheduleCalendarParityTest 逐字对账，不能改也不能混进别的字
+        HolidayNotice(selectedDate)
+
         Text(
             text = "${weekdayLabel(selectedDay)} · ${entries.size} 门课程",
             fontSize = 16.sp,
@@ -138,10 +145,13 @@ fun ScheduleScreen(
 
         Spacer(Modifier.height(16.dp))
 
+        // 放假那天整列不亮（课照旧列出，灰着）—— 判据是 dayIsLit，与日历页/周视图同一个
+        val lit = dayIsLit(selectedDate)
         entries.forEach { entry ->
             CourseCard(
                 course = entry,
                 highlighted = entry.key == highlightedKey,
+                dim = !lit,
                 metaText = "${weekdayLabel(entry.weekday)} ${entry.periodLabel}" +
                     entry.weeks.takeIf { it.isNotBlank() }?.let { " · $it" }.orEmpty(),
                 // 点击 → 详情浮层：列的是**这一天**的课（与上面这份列表同一份数据）

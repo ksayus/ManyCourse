@@ -1,5 +1,6 @@
 package com.tof.manycourse.ui
 
+import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -33,7 +34,9 @@ import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -44,6 +47,7 @@ import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.TextStyle
@@ -57,9 +61,12 @@ import androidx.compose.ui.unit.sp
 import com.tof.manycourse.data.Course
 import com.tof.manycourse.data.CourseEntry
 import com.tof.manycourse.data.CourseRepository
+import com.tof.manycourse.data.HolidayDay
 import com.tof.manycourse.data.SchoolWeek
 import com.tof.manycourse.data.WeekdayLabels
 import com.tof.manycourse.data.coursesOfDate
+import com.tof.manycourse.data.dayIsLit
+import com.tof.manycourse.data.holidayOf
 import com.tof.manycourse.ui.components.GlassCard
 import com.tof.manycourse.ui.components.glassSurface
 import com.tof.manycourse.ui.theme.LocalGlassTokens
@@ -291,15 +298,26 @@ internal fun CalendarGridLayout(
     modifier: Modifier = Modifier,
 ) {
     val days = remember(weekStart) { (0L..6L).map(weekStart::plusDays) }
+    // 节假日（放假 / 调休上班）：只管表头那个「休 / 班」标记与"亮不亮"，不改课表的张数
+    val holidayOfDay = days.map { holidayOf(it) }
     // ★ 画布 = 整学期课表（`CourseRepository.coursesOn`）：**与"第几周"无关**，
     //   所以换周时卡片的位置/张数全都不动，网格高度也不变 —— 不会"重新渲染"。
     //   每天只需再取一次权威数据（coursesOfDate，课表页/月历视图共用的同一个取值函数），
     //   用来决定画布上哪些卡片**亮**：亮 = 这一周真的会上，灰 = 课表里有但这一周不上。
+    //
+    //   ★ 放假那天**画布照旧**：课表上排的课全都在，只是**一门都不点亮**（见 litOfDay）。
+    //     这与"这一周不上"用的是同一条语言（灰卡），所以不需要另教一套图例
     val canvasOfDay = days.map { CourseRepository.coursesOn(it) }
     val realOfDay = days.map { coursesOfDate(it) }
-    val cardsOfDay = days.mapIndexed { index, _ -> buildGridCards(realOfDay[index], canvasOfDay[index]) }
+    // ★ 「亮不亮」是单独一层：放假那天给 null —— 正是 [buildGridCards] 规则 4
+    //   "这一周没有权威数据 → 画布全灰"的用法，于是整列灰着，位置与张数一张不动
+    val litOfDay = days.mapIndexed { index, date ->
+        if (dayIsLit(date)) realOfDay[index] else null
+    }
+    val cardsOfDay = days.mapIndexed { index, _ -> buildGridCards(litOfDay[index], canvasOfDay[index]) }
     // 详情浮层要列的是"那一天有什么课"（按节次）：有权威数据就用它（只有这一周真的会上的），
-    // 没有（或那天这周真没课）就退回画布 —— 与网格里看到的东西一致，不自说自话
+    // 没有（或那天这周真没课）就退回画布 —— 与网格里看到的东西一致，不自说自话。
+    // ★ 放假那天**照旧退回画布**：灰着的那几张卡点开，列的就是它们（放假 = 不亮，不是不存在）
     val dayCourses = days.mapIndexed { index, _ ->
         realOfDay[index]?.takeIf { it.isNotEmpty() }
             ?: canvasOfDay[index].map { CourseEntry.Local(it) }
@@ -386,6 +404,7 @@ internal fun CalendarGridLayout(
                 DayHeaderRow(
                     monthLabel = "${weekStart.monthValue}月",
                     days = days,
+                    holidays = holidayOfDay,
                     selected = selected,
                     today = today,
                     axisWidth = axis.width,
@@ -502,11 +521,15 @@ private fun WeekSliderRow(
  * 看着像月份贴在最左边、右边空着半个格子）。
  *
  * @param axisWidth 左轴占的宽度（与网格的时间轴**同一份实测值**，否则表头和网格会错位）
+ * @param holidays 与 [days] 一一对应的节假日（null = 那天不是什么特别日子）：
+ *   放假/调休那一格在日期后面挂一个「休 / 班」小标记 ——
+ *   放假那天这一列**整列灰着**（课照旧列出、只是不亮），没有标记的话看着像坏了
  */
 @Composable
 private fun DayHeaderRow(
     monthLabel: String,
     days: List<LocalDate>,
+    holidays: List<HolidayDay?>,
     selected: LocalDate,
     today: LocalDate,
     axisWidth: Dp,
@@ -528,9 +551,10 @@ private fun DayHeaderRow(
                 maxLines = 1,
             )
         }
-        days.forEach { date ->
+        days.forEachIndexed { index, date ->
             val isToday = date == today
             val isSelected = date == selected
+            val holiday = holidays.getOrNull(index)
             Column(
                 Modifier
                     .weight(1f)
@@ -540,6 +564,8 @@ private fun DayHeaderRow(
                         when {
                             isToday -> tokens.accent
                             isSelected -> MaterialTheme.colorScheme.primary.copy(alpha = 0.14f)
+                            // 放假 / 调休那一格给一层很淡的底：整列空着时至少表头有话说
+                            holiday != null -> MaterialTheme.colorScheme.onSurface.copy(alpha = 0.06f)
                             else -> Color.Transparent
                         }
                     )
@@ -558,18 +584,26 @@ private fun DayHeaderRow(
                     },
                     maxLines = 1,
                 )
-                Text(
-                    text = date.dayOfMonth.toString(),
-                    fontSize = 14.sp,
-                    lineHeight = 16.sp,
-                    fontWeight = if (isToday || isSelected) FontWeight.SemiBold else FontWeight.Normal,
-                    color = when {
-                        isToday -> Color.White
-                        isSelected -> tokens.accent
-                        else -> MaterialTheme.colorScheme.onSurface
-                    },
-                    maxLines = 1,
-                )
+                // 日期 + 「休 / 班」标记同一行：表头这一格只有 40dp 高，
+                // 三行文字（周几 / 日期 / 标记）塞不下 —— 见 HeaderHeight 的注释
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text = date.dayOfMonth.toString(),
+                        fontSize = 14.sp,
+                        lineHeight = 16.sp,
+                        fontWeight = if (isToday || isSelected) FontWeight.SemiBold else FontWeight.Normal,
+                        color = when {
+                            isToday -> Color.White
+                            isSelected -> tokens.accent
+                            else -> MaterialTheme.colorScheme.onSurface
+                        },
+                        maxLines = 1,
+                    )
+                    holiday?.let {
+                        Spacer(Modifier.width(2.dp))
+                        HolidayBadge(day = it, compact = true)
+                    }
+                }
             }
         }
     }
@@ -783,6 +817,15 @@ private fun GridBody(
  *
  * 拆出来是因为行高是"量出来的"（[GridBody] 的 `maxHeight ÷ 行数`），
  * 有了它这个函数就是纯绘制：给定行高必得同样的画面，与"屏幕多大"无关。
+ *
+ * ## 换周时**只有颜色在变**
+ *
+ * 换周不动布局：卡片的位置、张数、跨几节、网格高度全都不变，变的只有每张卡的**面貌**
+ * （亮 ↔ 灰，见 [rememberGridCardFace] 的插值）。
+ *
+ * ★ **刻意不做整块位移/淡入**：课程区整体上下一浮，看起来就是"整张课表在抖"，
+ * 而且课表的位置本身就是信息（第几行 = 第几节、第几列 = 星期几），挪一下反而要重新找。
+ * 所以换周的动效只有一处 —— **卡片自己的颜色**淡入淡出。
  */
 @Composable
 private fun GridCanvas(
@@ -864,7 +907,7 @@ private fun GridCanvas(
                 )
             }
 
-            // ③ 七天七列
+            // ③ 七天七列（换周时**只改颜色、不做位移**：见 GridCanvas 的注释）
             Row(Modifier.fillMaxSize()) {
                 days.forEachIndexed { index, date ->
                     DayColumn(
@@ -956,29 +999,34 @@ private fun DayColumn(
                     val ordered = slot.cards.sortedBy { if (it.dim) 0 else 1 }
                     ordered.forEachIndexed { index, card ->
                         val depth = ordered.lastIndex - index
-                        GridCourseCard(
-                            card = card,
-                            // ★ 天 + 行**两个**都要对上：只比行的话，同节次的其他日期会跟着描边
-                            highlighted = isTappedCard(
-                                tapped = tapped,
-                                day = dayIndex,
-                                row = gridRow,
-                                dim = card.dim,
-                            ),
-                            // 多行高的卡片（连上四节）不算"矮"，排版按格子本身多高来定
-                            compact = rowHeight * slot.rows < CompactCardRowHeight,
-                            modifier = Modifier
-                                .fillMaxSize()
-                                // 越靠下层缩得越多：露出一点点边，提示"这里还有别的课"
-                                .padding(
-                                    end = StackedCardInset * depth,
-                                    bottom = StackedCardInset * depth,
+                        // ★ 用 key 钉住"哪张卡是哪张"：换周时这一块里"谁在前谁在后"会变
+                        //   （亮的排最后），按位置复用的槽位会把状态串给另一张卡 ——
+                        //   那样一张卡会顶着另一张卡的面貌（颜色进度）先闪一下
+                        key(card.entry.key) {
+                            GridCourseCard(
+                                card = card,
+                                // ★ 天 + 行**两个**都要对上：只比行的话，同节次的其他日期会跟着描边
+                                highlighted = isTappedCard(
+                                    tapped = tapped,
+                                    day = dayIndex,
+                                    row = gridRow,
+                                    dim = card.dim,
                                 ),
-                            onClick = {
-                                onTappedRow(TappedCard(day = dayIndex, row = gridRow))
-                                onOpenDetail(gridRow)
-                            },
-                        )
+                                // 多行高的卡片（连上四节）不算"矮"，排版按格子本身多高来定
+                                compact = rowHeight * slot.rows < CompactCardRowHeight,
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    // 越靠下层缩得越多：露出一点点边，提示"这里还有别的课"
+                                    .padding(
+                                        end = StackedCardInset * depth,
+                                        bottom = StackedCardInset * depth,
+                                    ),
+                                onClick = {
+                                    onTappedRow(TappedCard(day = dayIndex, row = gridRow))
+                                    onOpenDetail(gridRow)
+                                },
+                            )
+                        }
                     }
                 }
             }
@@ -1001,8 +1049,9 @@ private fun DayColumn(
  *    地点是"去哪儿上课"，课名看颜色和开头也认得出，裁掉地点就真的少信息了。
  *    课名区用 `weight(1f)` 先让位，地点带永远留在卡片底部。
  *
- * @param card [GridCard.dim] = true 时画成灰调（这一周不上），
- *   所以同一门课"这周亮、下周灰"是同一张卡片换个底色，一眼可比
+ * @param card [GridCard.dim] = true 的目标面貌是灰调（这一周不上）。**换周时不是瞬间换色**：
+ *   底色 / 地点带 / 字色按 [rememberGridCardFace] 的进度一起插值，于是"亮↔灰"是淡入淡出，
+ *   同一门课"这周亮、下周灰"是同一张卡片换个面貌，一眼可比
  * @param highlighted 被**点中的那一张**（判定见 [isTappedCard]）：加一圈强调色描边（和 X/Y 轴的点亮配套）。
  *   同节次的其他日期不算 —— 那是"选中一门课，别的日子也跟着亮"那个 bug
  * @param compact 格子矮（< [CompactCardRowHeight]）时的紧凑排版
@@ -1027,13 +1076,18 @@ private fun GridCourseCard(
         animationSpec = tween(durationMillis = 120),
         label = "gridCardPressScale",
     )
-    val bodyTint = if (card.dim) DimCardTint else accent.copy(alpha = 0.22f)
-    val footerTint = if (card.dim) DimCardFooterTint else accent.copy(alpha = 0.34f)
-    val textColor = if (card.dim) {
-        MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.55f)
-    } else {
-        MaterialTheme.colorScheme.onSurface
-    }
+    // ★ 换周 = 就地把这张卡"换牌"（实体课 ↔ 灰卡）：走**面貌渐变**而不是瞬间换色。
+    //   0 = 灰卡的样子，1 = 这一周会上的样子；底色、地点带、字色三者一起插值，
+    //   于是"亮起来"是墨色淡入、"暗下去"是淡出 —— 换周的动效**只有这一处**
+    //   （刻意不做整块位移：整张表上下浮会看成"在抖"，而课表的位置本身就是信息）
+    val face = rememberGridCardFace(dim = card.dim)
+    val bodyTint = lerp(DimCardTint, accent.copy(alpha = 0.22f), face)
+    val footerTint = lerp(DimCardFooterTint, accent.copy(alpha = 0.34f), face)
+    val textColor = lerp(
+        MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.55f),
+        MaterialTheme.colorScheme.onSurface,
+        face,
+    )
 
     Column(
         modifier = modifier
@@ -1129,6 +1183,53 @@ private fun EmptyWeekHint(modifier: Modifier = Modifier) {
 
 /** 网格卡片按下的缩放（与 [CourseCard] 同一种反馈：缩放，不用涟漪） */
 private const val PressedGridCardScale = 0.97f
+
+/**
+ * 一张网格卡片**面貌**的连续值：0 = 灰卡（课表里有、这一周不上），1 = 实体课（这一周会上）。
+ *
+ * ## 为什么是"插值"而不是"换色"
+ *
+ * 换周时每张卡片的亮/灰会翻（见 [buildGridCards] 的规则 2），原来的写法是
+ * `if (card.dim) 灰 else 亮` —— 换色是瞬间的，一眼看上去像"啪"地换了一张牌。
+ * 这里把它变成一个**追着目标走的连续值**，卡片的底色 / 地点带 / 字色三者一起插值：
+ *
+ * | 方向 | 观感 |
+ * |---|---|
+ * | 灰 → 亮 | 课程的墨色**淡入**（这一周会上） |
+ * | 亮 → 灰 | **淡出**到灰底（这一周不上 / 放假，但位置留着） |
+ *
+ * ★ **换周的动效只有这一处，而且只改颜色**：不做整块位移或缩放 ——
+ * 整张表上下浮会看成"在抖"，而课表的位置本身就是信息（第几行 = 第几节、第几列 = 星期几）。
+ * 位置不动，网格线 / 时间轴 / "现在那一节"的高亮也就不用跟着对齐。
+ *
+ * ## 两个细节
+ *
+ * - **退出（变灰）比进入（点亮）略快**：沿用 `Motion` 的进出场口径（[exitTween] / [enterTween]），
+ *   收尾干脆一点，免得满屏卡片慢悠悠地褪色；
+ * - **初值 = 当前面貌**（不从头播）：页面刚进来时逐卡播一遍是多余的
+ *   （首帧要让几十张卡同时插值，白费一次逐帧重组）。真正该动的是
+ *   "换了周，有些卡由亮转灰、有些由灰转亮"这一拍 —— 那时目标值才会变。
+ *
+ * 拖动周次滑块时会连着改目标值，[androidx.compose.animation.core.Animatable] 会**从当前值继续追**，
+ * 于是连续拖动是一路平滑地化过去（不会一格一格地闪）。
+ *
+ * @param dim 这张卡现在的目标面貌；[GridCard.dim]
+ */
+@Composable
+private fun rememberGridCardFace(dim: Boolean): Float {
+    val animationsEnabled = rememberAnimationsEnabled()
+    // 初值取"当前面貌"：首帧就是对的，不会闪一下再变（见上面第 2 条）
+    val face = remember { Animatable(if (dim) 0f else 1f) }
+    LaunchedEffect(dim, animationsEnabled) {
+        val target = if (dim) 0f else 1f
+        if (!animationsEnabled) {
+            face.snapTo(target)
+            return@LaunchedEffect
+        }
+        face.animateTo(target, if (dim) exitTween() else enterTween())
+    }
+    return face.value
+}
 
 /**
  * 时间轴实测出来的一组度量：**轴宽 + 字号 + 中间那行的写法**。

@@ -47,6 +47,8 @@ import com.tof.manycourse.data.SessionStore
 import com.tof.manycourse.data.UiSettings
 import com.tof.manycourse.data.WeekScheduleStore
 import com.tof.manycourse.data.coursesOfDate
+import com.tof.manycourse.data.dayIsLit
+import com.tof.manycourse.data.holidayOf
 import com.tof.manycourse.data.naturalWeekOf
 import com.tof.manycourse.data.ScheduleCache
 import com.tof.manycourse.data.formatCacheTime
@@ -169,6 +171,10 @@ fun CalendarScreen(
                 fromWeekApi = WeekScheduleStore.coursesOn(selected) != null,
             )
 
+            // 节假日提示：放假 / 调休。两种布局都放在"来源"下一行 ——
+            // 它比来源更要紧（"为什么一格课程都没有"），所以紧贴着课程区
+            HolidayNotice(selected)
+
             Spacer(Modifier.height(4.dp))
         } else {
             MonthCalendarCard(
@@ -189,6 +195,9 @@ fun CalendarScreen(
                 schoolId = SessionStore.schoolId.value,
                 fromWeekApi = WeekScheduleStore.coursesOn(selected) != null,
             )
+
+            // 节假日提示：见上（两种布局同一份说明，文案来自同一个 holidayNoticeText）
+            HolidayNotice(selected)
 
             Spacer(Modifier.height(8.dp))
 
@@ -311,6 +320,9 @@ private fun MonthCalendarCard(
             val totalCells = leadingBlanks + daysInMonth
             val rows = (totalCells + 6) / 7
 
+            // ★ 翻月时**日期网格不动，只有格子里那些"颜色"淡进来**（圆点，见 DayCell）。
+            //   刻意不做整块位移/淡入：整块上下浮会看成"整张月历在抖"，
+            //   而日期格子的位置本身就是信息（第几列 = 星期几）
             for (row in 0 until rows) {
                 Row(Modifier.fillMaxWidth()) {
                     for (col in 0 until 7) {
@@ -397,36 +409,44 @@ private fun DayCourseList(
     selected: LocalDate,
     onCourseClick: (LocalDate, List<CourseEntry>) -> Unit,
 ) {
-    Text(
-        text = "当日课程",
-        fontSize = 16.sp,
-        fontWeight = FontWeight.SemiBold,
-        color = MaterialTheme.colorScheme.onSurface,
-    )
+    // ★ 点另一天 / 数据到达时这一列**淡进来**（只改透明度，不动位置）。
+    //   key 里带上 entries 是有意的：换天只是"内容换了"，而"教学周课表刚拉回来、
+    //   列表从空变成三门课"也是同一件事 —— 两者都该淡入，而不是"某一刻忽然冒出来"
+    Column(Modifier.contentFade(selected to entries)) {
+        Text(
+            text = "当日课程",
+            fontSize = 16.sp,
+            fontWeight = FontWeight.SemiBold,
+            color = MaterialTheme.colorScheme.onSurface,
+        )
 
-    Spacer(Modifier.height(12.dp))
+        Spacer(Modifier.height(12.dp))
 
-    when {
-        // 这一天没有任何可用数据 —— 宁可说"没有数据"，也不把别的周的课画出来
-        entries == null -> EmptyDayCard("该日期暂无课表数据")
-        entries.isEmpty() -> EmptyDayCard("当日无课")
-        else -> entries.forEach { entry ->
-            CourseCard(
-                course = entry,
-                metaText = buildString {
-                    append("${selected.monthValue}月${selected.dayOfMonth}日 ")
-                    append(entry.periodLabel)
-                    // 教务系统的课带着教师，本地课没有就不显示
-                    val teacher = (entry as? CourseEntry.Week)?.course?.teacher.orEmpty()
-                    if (teacher.isNotBlank()) {
-                        append(" · ")
-                        append(teacher)
-                    }
-                },
-                // 点击 → 课程详情浮层：列的是**这一天**的课（与上面这份列表同一份数据）
-                onClick = { onCourseClick(selected, entries.orEmpty()) },
-            )
-            Spacer(Modifier.height(12.dp))
+        // 放假那天：课**照旧列出来**，只是一门都不点亮（与课表页、周视图同一个判据）
+        val lit = dayIsLit(selected)
+        when {
+            // 这一天没有任何可用数据 —— 宁可说"没有数据"，也不把别的周的课画出来
+            entries == null -> EmptyDayCard("该日期暂无课表数据")
+            entries.isEmpty() -> EmptyDayCard("当日无课")
+            else -> entries.forEach { entry ->
+                CourseCard(
+                    course = entry,
+                    dim = !lit,
+                    metaText = buildString {
+                        append("${selected.monthValue}月${selected.dayOfMonth}日 ")
+                        append(entry.periodLabel)
+                        // 教务系统的课带着教师，本地课没有就不显示
+                        val teacher = (entry as? CourseEntry.Week)?.course?.teacher.orEmpty()
+                        if (teacher.isNotBlank()) {
+                            append(" · ")
+                            append(teacher)
+                        }
+                    },
+                    // 点击 → 课程详情浮层：列的是**这一天**的课（与上面这份列表同一份数据）
+                    onClick = { onCourseClick(selected, entries.orEmpty()) },
+                )
+                Spacer(Modifier.height(12.dp))
+            }
         }
     }
 }
@@ -595,6 +615,11 @@ private fun DayCell(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    // 节假日：放假那天**课照旧列出、只是一门都不点亮** —— 圆点照画，
+    // 但压暗到"灰着"的观感（与卡片、周视图格子是同一条语言：灰 = 今天不上）
+    val holiday = holidayOf(date)
+    val lit = holiday?.isRest != true
+
     // 优先用"这一天所在教学周"的课（真实日期）；本周还可以回落到本地课表，
     // 其他周取不到教学周数据就**留空**（宁可没有，也不把别的周的课画上去）
     val dots: List<Color> = WeekScheduleStore.coursesOn(date)
@@ -602,6 +627,8 @@ private fun DayCell(
         ?.map { CourseRepository.colorOfName(it.name) }
         ?: if (allowLocalFallback) CourseRepository.coursesOn(date).map { CourseRepository.colorOf(it) }
         else emptyList()
+    // 不亮 = 每个圆点都压暗（不是不画）：位置与个数仍然给出"这天排了几门课"这个信息
+    val dotColors = if (lit) dots else dots.map { it.copy(alpha = DimDotAlpha) }
 
     Column(
         modifier = modifier
@@ -617,19 +644,32 @@ private fun DayCell(
             .padding(4.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        Text(
-            text = date.dayOfMonth.toString(),
-            fontSize = 15.sp,
-            fontWeight = if (isToday) FontWeight.SemiBold else FontWeight.Normal,
-            color = when {
-                isSelected -> Color.White
-                isToday -> MaterialTheme.colorScheme.primary
-                else -> MaterialTheme.colorScheme.onSurface
-            },
-        )
+        // 日期 + 节假日标记（「休 / 班」是手机日历的通行写法，不另教一套图例）。
+        // 两者同一行：格子只有约 46dp 宽，分开两行放不下
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                text = date.dayOfMonth.toString(),
+                fontSize = 15.sp,
+                fontWeight = if (isToday) FontWeight.SemiBold else FontWeight.Normal,
+                color = when {
+                    isSelected -> Color.White
+                    isToday -> MaterialTheme.colorScheme.primary
+                    else -> MaterialTheme.colorScheme.onSurface
+                },
+            )
+            holiday?.let {
+                Spacer(Modifier.width(2.dp))
+                HolidayBadge(day = it, compact = true)
+            }
+        }
         Spacer(Modifier.height(4.dp))
-        Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
-            dots.take(4).forEach { color ->
+        // 圆点是"颜色的东西"：换月 / 数据到达时**只做淡入**（不改位置、不改尺寸）；
+        // key 用颜色表本身 —— 哪一天排了课变了，那一天的圆点就重新淡进来
+        Row(
+            Modifier.contentFade(dotColors, active = dotColors.isNotEmpty()),
+            horizontalArrangement = Arrangement.spacedBy(2.dp),
+        ) {
+            dotColors.take(4).forEach { color ->
                 Box(
                     Modifier
                         .size(6.dp)
@@ -640,3 +680,6 @@ private fun DayCell(
         }
     }
 }
+
+/** 「不亮」的圆点压暗到几成（与 `CourseCard` 的 dim 是同一档观感）*/
+private const val DimDotAlpha = 0.35f

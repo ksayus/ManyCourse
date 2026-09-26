@@ -49,6 +49,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import dev.chrisbanes.haze.HazeState
 import dev.chrisbanes.haze.hazeSource
+import com.tof.manycourse.data.HolidayCalendar
 import com.tof.manycourse.data.UiSettings
 import com.tof.manycourse.ui.components.GlassCard
 import com.tof.manycourse.ui.components.GlassHeader
@@ -153,6 +154,8 @@ private fun SettingsContent() {
         GlassModeCard()
         Spacer(Modifier.height(12.dp))
         CalendarLayoutCard()
+        Spacer(Modifier.height(12.dp))
+        HolidayDimCard()
 
         Spacer(Modifier.height(20.dp))
 
@@ -287,6 +290,42 @@ private fun CalendarLayoutCard() {
         checked = gridLayout,
         switchDesc = "日历网格布局开关",
         onCheckedChange = { UiSettings.setCalendarGridLayout(it) },
+    )
+}
+
+/**
+ * **节假日自动置灰**开关（默认开）。
+ *
+ * 打开后，法定放假日（国务院办公厅的通知，见 `data/HolidayCalendar.kt`）那天的课
+ * **照旧列在课表上，但一门都不点亮**（灰着），并由一行小字说明"某某节放假 · 当天的课都不上"。
+ * 调休上班日照常点亮，只把日子标出来。
+ *
+ * 为什么是"置灰"而不是"删掉"：把课从数据里拿掉的话，课程卡片会直接消失，
+ * 用户看到的是"课表空了" —— 分不清是放假、还是同步挂了、还是自己没选课。
+ * 灰着则一眼就知道"这天排了课、但今天不上"，也不必另教一套图例。
+ *
+ * 这是**唯一一处 App 覆盖教务系统课表**的地方（其他地方都是教务系统说什么就是什么），
+ * 所以必须给用户一个退回去的开关：学校真有假期补课、或者就想让放假当天和平时长得一样时，
+ * 关掉它即可 —— 关掉之后连那行说明也一起消失（既不置灰，也不解释）。
+ *
+ * 副标题里带上**数据覆盖到哪一年**：节假日表是内置的、一年一更，
+ * 用户翻到表外的年份时得知道"这不过滤不是坏了，是还没收录"。
+ */
+@Composable
+private fun HolidayDimCard() {
+    val enabled by UiSettings.dimOnHolidays
+    val coverage = HolidayCalendar.coverageLabel
+    SettingSwitchCard(
+        title = "节假日自动置灰",
+        subtitle = if (enabled) "放假那天的课照旧列出，但不点亮（灰着）" else "已关闭，放假当天与平时一样",
+        hint = if (coverage.isBlank()) {
+            "法定节假日数据尚未收录"
+        } else {
+            "依据国务院办公厅放假安排（已收录 $coverage 年）；调休上班日照常上课"
+        },
+        checked = enabled,
+        switchDesc = "节假日自动置灰开关",
+        onCheckedChange = { UiSettings.setDimOnHolidays(it) },
     )
 }
 
