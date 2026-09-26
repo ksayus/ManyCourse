@@ -1,4 +1,4 @@
-# 把"走几圈"采到的数据打进正式版
+﻿# 把"走几圈"采到的数据打进正式版
 #
 # 用法（在仓库根目录）：
 #   1) 先在手机上走几圈（设置 → 开发者 → 开发者模式 → 地图页 → 轨迹采集），
@@ -14,6 +14,11 @@
 #
 # 只拷贝、不解析：合并与去重全部在 App 里做（`data/MapPointStore.kt` /
 # `data/WifiFingerprintStore.kt`），逻辑留在有单测的 Kotlin 里，脚本保持成十行拷贝。
+#
+# ★ 另见 `tools/pack_indoor_data.ps1`：它多认一种文件 —— **原始轨迹 `walk-*.txt`**。
+#   那种文件本脚本一定会跳过（App 也没法直接用），但它是**采到的数据**，
+#   采的时候没点「停止并融合」的话就只有它、没有融合结果，跳过等于白走一趟。
+#   要连轨迹一起入库，用那个脚本。
 #
 # 带 -Clean 会先清空目标目录（重新开始一份干净的内置数据）。
 
@@ -78,4 +83,17 @@ if ($skipped.Count -gt 0) {
     Write-Host ""
     Write-Host "跳过了 $($skipped.Count) 个认不出的文件：" -ForegroundColor DarkGray
     $skipped | ForEach-Object { Write-Host "  $($_.Name)" -ForegroundColor DarkGray }
+}
+
+# ★ 原始轨迹要**先在 App 里融合**才入库（`BundledIndoorData` 刻意不认 `manycourse-walk/1`），
+# 所以本脚本必然跳过 walk-*.txt。但那是采到的数据、不是垃圾：采的时候没点「停止并融合」，
+# 这一趟就只有轨迹文件、没有融合结果 —— 跳过它等于让那趟白走。这里专门吼一声。
+$walks = @($skipped | Where-Object { (Get-Content $_.FullName -TotalCount 1) -eq "manycourse-walk/1" })
+if ($walks.Count -gt 0) {
+    Write-Host ""
+    Write-Host "⚠ 其中 $($walks.Count) 份是原始轨迹，本脚本不会融合它们：" -ForegroundColor Yellow
+    $walks | ForEach-Object { Write-Host "    $($_.Name)" -ForegroundColor Yellow }
+    Write-Host "  要把这些轨迹里的点位/指纹也并进库里，改用：" -ForegroundColor Yellow
+    Write-Host "    pwsh tools/pack_indoor_data.ps1 -Source $Source" -ForegroundColor Cyan
+    Write-Host "  （它调 App 自己的 fuseWalk 在电脑上跑一遍，再和已有的并库去重）" -ForegroundColor DarkGray
 }

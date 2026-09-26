@@ -76,3 +76,11 @@ Thumbs.db
 # .ico 本身不参与构建，属于上面说的"设计素材"。
 # 换图标：把新 .ico 丢进 tools/icon/，跑一次 pwsh tools/make_launcher_icons.ps1。
 /tools/icon/
+
+# ── 采集数据（原始） ────────────────────────────────────────────────────
+# point/ 是 `adb pull /sdcard/ManyCourse point` 拉下来的**设备导出**：原始轨迹
+# （walk-*.txt）、点位与标定锚点、Wi-Fi 指纹。它是"打包的输入"，不是工程的一部分；
+# 而且原始轨迹带着完整行走路线和沿途扫到的 AP，属于定位信息，不进仓库。
+# 入库的是它的**产物**：app/src/main/assets/indoor/（内置数据，那两份才提交）。
+# 要重新打包：adb pull ... point && pwsh tools/pack_indoor_data.ps1
+/point/
