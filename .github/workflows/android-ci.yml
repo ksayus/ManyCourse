@@ -62,13 +62,25 @@ jobs:
       - name: Set up Gradle (with cache)
         uses: gradle/actions/setup-gradle@v4
 
+      # Android SDK：GitHub 的 ubuntu runner **自带**（`/usr/local/lib/android/sdk`，
+      # 而且已经设好 ANDROID_HOME / ANDROID_SDK_ROOT），所以不需要第三方 action 再装一遍 ——
+      # 而且 `android-actions/setup-android@v3` 内部会执行 `sdkmanager tools`，
+      # 那个**遗留包已经被 Google 从仓库索引里删掉**了（`Failed to find package 'tools'`），
+      # 会让整个 job 卡死在这一步（2026-09 起必现）。改成自己装需要的那几个包。
       - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
-
-      # 补装 AGP 声明的平台与构建工具（compileSdk 37 / build-tools 36）。
-      # runner 镜像通常已经带了，这里只是兜底：已装过的 sdkmanager 会秒退。
-      - name: Install required SDK packages
-        run: sdkmanager --install 'platform-tools' 'platforms;android-37' 'build-tools;36.0.0'
+        run: |
+          set -euo pipefail
+          export ANDROID_HOME="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
+          # Gradle 靠这个环境变量找 SDK（CI 上没有 local.properties —— 它是 gitignore 的）
+          echo "ANDROID_HOME=$ANDROID_HOME" >> "$GITHUB_ENV"
+          echo "ANDROID_SDK_ROOT=$ANDROID_HOME" >> "$GITHUB_ENV"
+          # sdkmanager 不一定在 PATH 上（镜像里在 cmdline-tools/<版本>/bin），按绝对路径找
+          SDKMANAGER=$(command -v sdkmanager || find "$ANDROID_HOME/cmdline-tools" -name sdkmanager -type f | head -n1)
+          if [ -z "$SDKMANAGER" ]; then echo "❌ 找不到 sdkmanager（runner 镜像变了吗？）"; exit 1; fi
+          echo "sdkmanager: $SDKMANAGER"
+          yes | "$SDKMANAGER" --licenses > /dev/null || true
+          # 补装 AGP 声明的平台与构建工具（compileSdk 37 / build-tools 36）；已装过会秒退
+          "$SDKMANAGER" --install 'platform-tools' 'platforms;android-37' 'build-tools;36.0.0'
 
       - name: Show toolchain versions
         run: |
@@ -152,10 +164,16 @@ jobs:
         uses: gradle/actions/setup-gradle@v4
 
       - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
-
-      - name: Install required SDK packages
-        run: sdkmanager --install 'platform-tools' 'platforms;android-37' 'build-tools;36.0.0'
+        run: |
+          set -euo pipefail
+          export ANDROID_HOME="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
+          echo "ANDROID_HOME=$ANDROID_HOME" >> "$GITHUB_ENV"
+          echo "ANDROID_SDK_ROOT=$ANDROID_HOME" >> "$GITHUB_ENV"
+          SDKMANAGER=$(command -v sdkmanager || find "$ANDROID_HOME/cmdline-tools" -name sdkmanager -type f | head -n1)
+          if [ -z "$SDKMANAGER" ]; then echo "❌ 找不到 sdkmanager（runner 镜像变了吗？）"; exit 1; fi
+          echo "sdkmanager: $SDKMANAGER"
+          yes | "$SDKMANAGER" --licenses > /dev/null || true
+          "$SDKMANAGER" --install 'platform-tools' 'platforms;android-37' 'build-tools;36.0.0'
 
       - name: Grant execute permission for gradlew
         run: chmod +x gradlew
