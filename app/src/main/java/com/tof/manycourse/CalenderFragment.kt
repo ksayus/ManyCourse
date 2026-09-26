@@ -6,19 +6,24 @@ import android.view.View
 import android.view.ViewGroup
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.ComposeView
+import androidx.compose.ui.unit.dp
 import androidx.fragment.app.Fragment
 import dev.chrisbanes.haze.HazeState
 import dev.chrisbanes.haze.hazeSource
@@ -27,6 +32,7 @@ import com.tof.manycourse.ui.AddCourseScreen
 import com.tof.manycourse.ui.CalendarLayoutToggle
 import com.tof.manycourse.ui.CalendarScreen
 import com.tof.manycourse.ui.CourseDetailDialog
+import com.tof.manycourse.ui.RefreshButton
 import com.tof.manycourse.ui.components.GlassBottomNav
 import com.tof.manycourse.ui.components.GlassHeader
 import com.tof.manycourse.ui.components.LiquidGlassBackground
@@ -66,11 +72,19 @@ class CalenderFragment : Fragment() {
                     }
                     Column(Modifier.fillMaxSize()) {
                         // 页头右侧的「周 / 月」切换：与设置页的「日历布局」是同一个状态，
-                        // 放在页头是因为"换视图"是看日历时的常用动作，不该每次都绕进设置页
+                        // 放在页头是因为"换视图"是看日历时的常用动作，不该每次都绕进设置页。
+                        // ★ 刷新按钮也必须在这里：日历的周视图**整屏不滚动**，
+                        //   下拉手势在那里没有触发点，页头按钮是唯一两布局通用的入口
                         GlassHeader(
                             hazeState,
                             "日程日历",
-                            actions = { CalendarLayoutToggle() },
+                            actions = {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    RefreshButton()
+                                    Spacer(Modifier.width(8.dp))
+                                    CalendarLayoutToggle()
+                                }
+                            },
                         )
                         Box(
                             Modifier

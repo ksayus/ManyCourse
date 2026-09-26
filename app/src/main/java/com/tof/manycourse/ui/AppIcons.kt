@@ -115,6 +115,22 @@ object AppIcons {
         )
     }
 
+    /**
+     * 刷新（手动刷新的页头按钮）：一圈带箭头的闭环，Lucide `refresh-cw` 口径。
+     *
+     * 画成**两段弧 + 两个箭头**而不是一条闭合圆环："能转起来"这件事要看得出来 ——
+     * 刷新中它会被旋转（见 `ui/RefreshUi.kt` 的 `RefreshButton`），
+     * 一个正圆转起来是看不出来的。
+     */
+    val Refresh: ImageVector by lazy {
+        strokeIcon(
+            "M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8",
+            "M21 3v5h-5",
+            "M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16",
+            "M8 16H3v5",
+        )
+    }
+
     /** 复制（课程详情里"点一下复制课名/教师/教室"）：两张叠起来的圆角纸，Lucide 口径 */
     val Copy: ImageVector by lazy {
         strokeIcon(

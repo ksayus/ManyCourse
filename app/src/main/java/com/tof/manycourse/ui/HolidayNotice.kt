@@ -23,6 +23,19 @@ import com.tof.manycourse.ui.theme.LocalGlassTokens
 import java.time.LocalDate
 
 /**
+ * 提示条的下边距。
+ *
+ * 提出来是因为**周视图要按它预留高度**（`CalendarScreen` 的 `HolidayNoticeSlot`）：
+ * 那一行的高度必须恒定，否则放假那天课表整块会被挤矮一截。
+ * 写成共享常量，是为了让"预留的高度"和"真正画出来的高度"永远对得上 ——
+ * 各写一个 8.dp 的话，哪天这里改成 6dp，周视图就会每次差 2dp。
+ */
+internal val HolidayNoticeBottomPadding = 8.dp
+
+/** 提示条正文的行高（同上：周视图按它预留高度，字号放大时一起放大）*/
+internal val HolidayNoticeLineHeight = 16.sp
+
+/**
  * 「这一天的课为什么灰着」提示条 —— **课表页与日历页共用**。
  *
  * 放假那天课表**照旧列着当天的课**，只是**一门都不点亮**（灰着）。
@@ -45,6 +58,9 @@ import java.time.LocalDate
  *
  * ★ 取不到节假日（不是节假日、或开关关掉了）时**整块不画**，不占高度：
  * [holidayOf] 已经把开关也算进去了，这里不再判一次（判两遍迟早会不一致）。
+ * 周视图那边要的"这一行的位置照留"由调用方负责（`CalendarScreen` 的 `WeekFootNotes`
+ * 把这一行和来源提示条合成了一块、按两行留高）—— 所以这个组件本身保持
+ * "没有就一点都不占"，两处需求各归各的。
  */
 @Composable
 internal fun HolidayNotice(date: LocalDate, modifier: Modifier = Modifier) {
@@ -56,7 +72,7 @@ internal fun HolidayNotice(date: LocalDate, modifier: Modifier = Modifier) {
     Row(
         modifier
             .fillMaxWidth()
-            .padding(bottom = 8.dp),
+            .padding(bottom = HolidayNoticeBottomPadding),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         HolidayBadge(day)
@@ -64,7 +80,7 @@ internal fun HolidayNotice(date: LocalDate, modifier: Modifier = Modifier) {
         Text(
             text = holidayNoticeText(day),
             fontSize = 12.sp,
-            lineHeight = 16.sp,
+            lineHeight = HolidayNoticeLineHeight,
             color = tint,
         )
     }

@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -34,16 +35,17 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import dev.chrisbanes.haze.HazeState
 import com.tof.manycourse.data.CourseEntry
 import com.tof.manycourse.data.CourseRepository
-import com.tof.manycourse.data.LoginSettings
+import com.tof.manycourse.data.DataRefresh
 import com.tof.manycourse.data.SchoolWeek
-import com.tof.manycourse.data.SessionStore
 import com.tof.manycourse.data.UiSettings
 import com.tof.manycourse.data.WeekScheduleStore
 import com.tof.manycourse.data.coursesOfDate
@@ -132,79 +134,85 @@ fun CalendarScreen(
     // 月历布局的滚动位置：状态提在这里，切布局来回时不至于把位置丢掉
     val scrollState = rememberScrollState()
 
-    Column(
-        Modifier
-            .fillMaxSize()
-            // ★ 周视图**整屏不滚动**：内容按"这一屏剩多少高"自适应（见 CalendarGridLayout），
-            //   所以"看完这一周的七天"永远不用上下滑。
-            //   月历视图照旧整页滚动 —— 它下面是"当日课程"列表，长度本来就不定
-            .then(if (gridLayout) Modifier else Modifier.verticalScroll(scrollState))
-            // 周视图的外边距比页面默认的 16dp 小得多：七列等宽，边距每让出 1dp、
-            // 每列就宽 1/7dp —— 卡片本来就窄，这点宽度值得省
-            .padding(
-                horizontal = if (gridLayout) 8.dp else 16.dp,
-                vertical = if (gridLayout) 6.dp else 8.dp,
-            )
-    ) {
-        if (gridLayout) {
-            // weight(1f)：这一屏剩下的高度**全给周视图**（它内部再按行数分给每一行）。
-            // 高度有界，是 GridBody 能"量出还剩多少高"的前提
-            CalendarGridLayout(
-                weekStart = weekStart,
-                selected = selected,
-                today = today,
-                // 教学周列表 = 周次滑块的刻度（服务端给的，不在客户端猜开学日期）；
-                // 为空时滑块整行不画，左右滑动按自然周翻（见 CalendarGridLayout 的注释）
-                weeks = WeekScheduleStore.weeks,
-                onSelect = { selected = it },
-                onAddCourse = onAddCourse,
-                onCourseClick = onCourseClick,
-                modifier = Modifier.weight(1f),
-            )
+    // 外层 Box 只干一件事：给「没刷成」那句提示当浮层容器 ——
+    // 周视图是按屏幕高度分给七天的，往页面里插一行会把它挤一下再弹回来
+    Box(Modifier.fillMaxSize()) {
+        Column(
+            Modifier
+                .fillMaxSize()
+                // ★ 周视图**整屏不滚动**：内容按"这一屏剩多少高"自适应（见 CalendarGridLayout），
+                //   所以"看完这一周的七天"永远不用上下滑。
+                //   月历视图照旧整页滚动 —— 它下面是"当日课程"列表，长度本来就不定
+                .then(if (gridLayout) Modifier else Modifier.verticalScroll(scrollState))
+                // 周视图的外边距比页面默认的 16dp 小得多：七列等宽，边距每让出 1dp、
+                // 每列就宽 1/7dp —— 卡片本来就窄，这点宽度值得省
+                .padding(
+                    horizontal = if (gridLayout) 8.dp else 16.dp,
+                    vertical = if (gridLayout) 6.dp else 8.dp,
+                )
+        ) {
+            if (gridLayout) {
+                // weight(1f)：这一屏剩下的高度**全给周视图**（它内部再按行数分给每一行）。
+                // 高度有界，是 GridBody 能"量出还剩多少高"的前提
+                //
+                // ★ 这里的 `weight(1f)` 是"吃剩下的"，所以**它下面那一块说明的任何高度变化
+                //   都会直接改变课表的大小**（行高 = 剩多少高 ÷ 行数）。所以那一块不是
+                //   "有内容才占位"，而是留了一块**高度恒定**的地方 —— 见 [WeekFootNotes]：
+                //   本周有没有放假、周次课表拉到没有，都不该让课表整块变高变矮
+                CalendarGridLayout(
+                    weekStart = weekStart,
+                    selected = selected,
+                    today = today,
+                    // 教学周列表 = 周次滑块的刻度（服务端给的，不在客户端猜开学日期）；
+                    // 为空时滑块不显示，但**位置照留**（高度恒定，见 WeekSliderRow）
+                    weeks = WeekScheduleStore.weeks,
+                    onSelect = { selected = it },
+                    onAddCourse = onAddCourse,
+                    onCourseClick = onCourseClick,
+                    modifier = Modifier.weight(1f),
+                )
 
-            Spacer(Modifier.height(4.dp))
+                Spacer(Modifier.height(4.dp))
 
-            // 数据来源说明：两种布局都要有 —— 网格里空着的地方到底是"没课"还是"没数据"，
-            // 只有这一行讲得清
-            WeekSourceHint(
-                schoolId = SessionStore.schoolId.value,
-                fromWeekApi = WeekScheduleStore.coursesOn(selected) != null,
-            )
+                // 网格下面那两行说明（来源 + 节假日）**合成一块、高度按两行预留** ——
+                // 见 [WeekFootNotes]：分开预留要占三行的高度，合起来两行就够，
+                // 省下的那一行归课表（8 行的密课表里，一行 ≈ 5dp 的卡片高度）
+                WeekFootNotes(
+                    fromWeekApi = WeekScheduleStore.coursesOn(selected) != null,
+                    date = selected,
+                )
 
-            // 节假日提示：放假 / 调休。两种布局都放在"来源"下一行 ——
-            // 它比来源更要紧（"为什么一格课程都没有"），所以紧贴着课程区
-            HolidayNotice(selected)
+                Spacer(Modifier.height(4.dp))
+            } else {
+                MonthCalendarCard(
+                    month = month,
+                    selected = selected,
+                    selectedWeek = selectedWeek,
+                    today = today,
+                    currentWeek = currentWeek,
+                    courseCount = entries?.size ?: 0,
+                    onMonthChange = { month = it },
+                    onSelect = { selected = it },
+                    onAddCourse = onAddCourse,
+                )
 
-            Spacer(Modifier.height(4.dp))
-        } else {
-            MonthCalendarCard(
-                month = month,
-                selected = selected,
-                selectedWeek = selectedWeek,
-                today = today,
-                currentWeek = currentWeek,
-                courseCount = entries?.size ?: 0,
-                onMonthChange = { month = it },
-                onSelect = { selected = it },
-                onAddCourse = onAddCourse,
-            )
+                Spacer(Modifier.height(8.dp))
 
-            Spacer(Modifier.height(8.dp))
+                WeekSourceHint(fromWeekApi = WeekScheduleStore.coursesOn(selected) != null)
 
-            WeekSourceHint(
-                schoolId = SessionStore.schoolId.value,
-                fromWeekApi = WeekScheduleStore.coursesOn(selected) != null,
-            )
+                // 节假日提示：见上（两种布局同一份说明，文案来自同一个 holidayNoticeText）
+                HolidayNotice(selected)
 
-            // 节假日提示：见上（两种布局同一份说明，文案来自同一个 holidayNoticeText）
-            HolidayNotice(selected)
+                Spacer(Modifier.height(8.dp))
 
-            Spacer(Modifier.height(8.dp))
+                DayCourseList(entries = entries, selected = selected, onCourseClick = onCourseClick)
 
-            DayCourseList(entries = entries, selected = selected, onCourseClick = onCourseClick)
-
-            Spacer(Modifier.height(24.dp))
+                Spacer(Modifier.height(24.dp))
+            }
         }
+
+        // 「没刷成」的原因（本地调试账号等）：浮在底部，几秒后自己消失
+        RefreshNotice()
     }
 }
 
@@ -496,9 +504,13 @@ private fun EmptyDayCard(text: String = "当日无课") {
  * ★ 右侧的动作（重新登录 / 重试）刻意用**链接式文字**而不是 `TextButton`：
  * `TextButton` 自带 40dp 的最小高度，会把这一条提示撑到 48dp —— 那是"整周不用滚动"
  * 预算里最贵的一行（真机实测：48dp → 24dp）。样式与汇总条的「+ 添加」一致。
+ *
+ * ★ 「重试」走的是 [DataRefresh]（页头刷新按钮、课表页下拉刷新同一个入口），
+ * 所以这一条不再自己拼 `WeekScheduleStore.sync(...)`：那样它会漏掉"本地调试账号
+ * 根本没有可刷新的数据"这类判断。学校 id 因此也不必再传进来。
  */
 @Composable
-private fun WeekSourceHint(schoolId: String?, fromWeekApi: Boolean) {
+private fun WeekSourceHint(fromWeekApi: Boolean) {
     val context = LocalContext.current
     val state = WeekScheduleStore.state.value
     val cachedAt = ScheduleCache.savedAt.value
@@ -524,7 +536,10 @@ private fun WeekSourceHint(schoolId: String?, fromWeekApi: Boolean) {
             action = null
         }
         state is WeekScheduleStore.State.Expired -> if (cachedLabel != null) {
-            text = "登录已过期 · 日历用的是 $cachedLabel 的缓存（刷新需重新登录）"
+            // ★ 这句话要压在两行以内（那一块的高度就是按两行预留的，见 [footNotesMinHeight]）：
+            //   末尾原来还有一句「（刷新需重新登录）」，和右边那个「重新登录以刷新」说的是同一件事 ——
+            //   删掉这句冗长之后，"来源一行 + 节假日一行"正好落在预留的两行里，不会再长高
+            text = "登录已过期 · 日历用的是 $cachedLabel 的缓存"
             error = true
             action = "重新登录以刷新" to { context.logoutAndBackToLogin() }
         } else {
@@ -535,13 +550,8 @@ private fun WeekSourceHint(schoolId: String?, fromWeekApi: Boolean) {
         state is WeekScheduleStore.State.Failed -> {
             text = "教学周课表没拉到（${state.message}），日历只显示本周"
             error = true
-            action = "重试" to {
-                WeekScheduleStore.sync(
-                    schoolId = schoolId ?: LoginSettings.selectedSchoolId.value,
-                    account = SessionStore.account.value,
-                    force = true,
-                )
-            }
+            // 和页头刷新按钮、课表页的下拉刷新是**同一个入口**（见 data/DataRefresh.kt）
+            action = "重试" to { DataRefresh.start() }
         }
         else -> {
             // Idle = 这所学校的教务系统给不出"某一周有哪些课"，只能在本地课表里兜本周
@@ -555,7 +565,7 @@ private fun WeekSourceHint(schoolId: String?, fromWeekApi: Boolean) {
     Row(
         Modifier
             .fillMaxWidth()
-            .padding(bottom = 4.dp),
+            .padding(bottom = SourceHintBottomPadding),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(
@@ -578,6 +588,65 @@ private fun WeekSourceHint(schoolId: String?, fromWeekApi: Boolean) {
                     .padding(horizontal = 8.dp, vertical = 4.dp),
             )
         }
+    }
+}
+
+// ── 周视图下方那一块说明的"高度恒定"─────────────────────────────────────────
+//
+// 周视图的网格是**吃剩下的高度**（行高 = 剩多少高 ÷ 行数，见 CalendarGridLayout），
+// 所以它下面这一块的高度必须与**内容**无关，只能与**系统字号**有关，否则：
+//
+// | 变的是什么 | 不留够会怎样 |
+// |---|---|
+// | 来源提示条：同步中 / 已同步 / 失败 / 不支持按周查，1~2 行 | 状态一变就长高一行，课表跟着缩 |
+// | 节假日提示：只有放假 / 调休那天才有 | 一到节假日课表就矮一截 |
+//
+// ★ 两行**合成一块**（[WeekFootNotes]）而不是各留各的：分开预留要占"两行 + 一行 + 两处下边距"，
+//   合起来两行就够（`来源一行 + 节假日一行` 正好是常见情形），省下的那一行全归课表 ——
+//   8 行的密课表里每行只有 46dp 上下，卡片里能画几行课名全靠这一点高度（见 GridCourseCard）。
+//
+// 用 `heightIn(min = …)` 而不是写死高度：内容真的装不下（系统字号特别大、
+// 或者"长提示 + 节假日"同时出现）时让它自己长高、网格内部滚动 ——
+// **字号与信息优先于"不滚动"**（说明文案一个字都不截断）。
+
+/** 提示条的字号与行高口径（这几行文案都是 12sp / 行高 16sp，和 [HolidayNotice] 一致）*/
+private val NoticeLineHeight = 16.sp
+
+/** [WeekSourceHint] 自己的下边距（节假日那行的下边距是共享常量 [HolidayNoticeBottomPadding]）*/
+private val SourceHintBottomPadding = 4.dp
+
+/**
+ * 网格下方那一块的高度基线 = **两行正文 + 两处下边距**。
+ *
+ * 两行正好覆盖最常见的组合（`来源一行 + 节假日一行`）；平时没有节假日时多出来的那点空白
+ * 就是"不让课表忽高忽低"的代价。
+ */
+@Composable
+private fun footNotesMinHeight(): Dp =
+    with(LocalDensity.current) { NoticeLineHeight.toDp() * 2 } +
+        SourceHintBottomPadding + HolidayNoticeBottomPadding
+
+/**
+ * 周视图网格下方的那块说明（**两种布局只有周视图用这一块**）：
+ *
+ * ```
+ *   课表来源：教务系统 · 周次课表（与「课表」页同一份数据）   ← 来源（可能带「重试」链接）
+ *   休  国庆节放假 · 当天的课都不上                          ← 节假日（只有放假/调休那天才有）
+ * ```
+ *
+ * 两者都是"这一屏的课为什么长这样"的解释，放在一起读也顺（来源 → 特殊情况）。
+ * 高度由 [footNotesMinHeight] 兜底，所以**课表大小不随这两行内容变化**；
+ * 月视图与课表页是可滚动的页面，多留一行只是多一段滚动距离，那边不这么做。
+ */
+@Composable
+private fun WeekFootNotes(fromWeekApi: Boolean, date: LocalDate) {
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .heightIn(min = footNotesMinHeight())
+    ) {
+        WeekSourceHint(fromWeekApi = fromWeekApi)
+        HolidayNotice(date)
     }
 }
 

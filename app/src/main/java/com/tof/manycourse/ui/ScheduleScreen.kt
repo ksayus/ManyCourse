@@ -2,6 +2,7 @@ package com.tof.manycourse.ui
 
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -12,9 +13,11 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -33,8 +36,7 @@ import com.tof.manycourse.data.Course
 import com.tof.manycourse.data.CourseEntry
 import com.tof.manycourse.data.CourseRepository
 import com.tof.manycourse.data.CourseSync
-import com.tof.manycourse.data.LoginSettings
-import com.tof.manycourse.data.SessionStore
+import com.tof.manycourse.data.DataRefresh
 import com.tof.manycourse.data.WeekScheduleStore
 import com.tof.manycourse.data.WeekdayLabels
 import com.tof.manycourse.data.coursesOfDate
@@ -63,12 +65,19 @@ import java.time.LocalTime
  * 只在第 2-4 周上的军事理论，而且**会和日历页对不上** —— 日历页拿的是按周的真实数据。
  * 两页要显示同一天的课，就必须用同一个来源、同一套兜底规则。
  *
+ * ## 手动刷新
+ *
+ * **下拉即刷新**（设计规范里课表页顶部那行「下拉刷新」说的就是这件事），
+ * 走的入口是 [DataRefresh]：它强制联网重拉（绕开 6 小时缓存与"已经同步过"两道判断）。
+ * 页头也有一个刷新按钮（见 `RefreshButton`）—— 下拉是手势，按钮是"一定能点到"的那条路。
+ *
  * @param onAddCourse 点「添加课程」（参数 = 预选的星期几）
  * @param onCourseClick 点某张课程卡片 → 由 Fragment 打开课程详情浮层。
  *   参数是**那一天的全部课**（按节次排）：详情卡列的是"那天有什么课"，不是"点中的那一门"。
  *   **浮层不在这里组合**：本页的内容区被页头和底栏夹在中间，浮层挂在这里的话
  *   遮罩只能盖住中间那一段（页头/底栏还亮着），和「添加课程」的全屏浮层对不上。
  */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ScheduleScreen(
     hazeState: HazeState,
@@ -97,83 +106,99 @@ fun ScheduleScreen(
         if (selectedDay != todayWeekday) null else nextCourseKey(entries, LocalTime.now())
     }
 
-    Column(
-        Modifier
-            .fillMaxSize()
-            .verticalScroll(rememberScrollState())
-            .padding(horizontal = 16.dp)
-    ) {
-        // 星期筛选（设计规范：32dp 胶囊 Chip）
-        Row(
-            Modifier
-                .fillMaxWidth()
-                .horizontalScroll(rememberScrollState())
-                .padding(vertical = 8.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
+    // 外层 Box 是给「没刷成」那一句提示用的：它是浮层，不能挤动下面的课表
+    Box(Modifier.fillMaxSize()) {
+        PullToRefreshBox(
+            // 转圈看的是真实同步状态（见 DataRefresh.running），不另记一份"我在刷新"
+            isRefreshing = DataRefresh.running,
+            onRefresh = { DataRefresh.start() },
+            modifier = Modifier.fillMaxSize(),
         ) {
-            WeekdayLabels.forEachIndexed { index, label ->
-                CampusChip(
-                    text = label,
-                    selected = selectedDay == index + 1,
-                    onClick = { selectedDay = index + 1 },
+            Column(
+                Modifier
+                    .fillMaxSize()
+                    .verticalScroll(rememberScrollState())
+                    .padding(horizontal = 16.dp)
+            ) {
+                // 下拉刷新提示（/ 刷不了的原因）。按设计规范放在日期筛选**上面**
+                RefreshHintRow(hint = "下拉刷新课表")
+
+                // 星期筛选（设计规范：32dp 胶囊 Chip）
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState())
+                        .padding(vertical = 8.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    WeekdayLabels.forEachIndexed { index, label ->
+                        CampusChip(
+                            text = label,
+                            selected = selectedDay == index + 1,
+                            onClick = { selectedDay = index + 1 },
+                        )
+                    }
+                }
+
+                Spacer(Modifier.height(8.dp))
+
+                // 同步状态：登录后会按"登录的学校"去拉课表，这里把过程和失败原因说清楚
+                SyncStatusBanner()
+
+                // 教学周标签：和日历页月份标题下那一行是**同一个来源**，
+                // 让"两页看的是同一周"这件事一眼可见
+                WeekLabel()
+
+                // 节假日提示：放假那天**课表照旧列出当天的课，但一门都不点亮**（灰着），
+                // 不说一句"今天放假"的话，用户会以为这些课照常上
+                // ★ 放在门数那行**上面**、且自成一行：门数那行的文案（`周X · N 门课程`）
+                //   被真机测试 ScheduleCalendarParityTest 逐字对账，不能改也不能混进别的字
+                HolidayNotice(selectedDate)
+
+                Text(
+                    text = "${weekdayLabel(selectedDay)} · ${entries.size} 门课程",
+                    fontSize = 16.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    lineHeight = 22.sp,
+                    color = MaterialTheme.colorScheme.onSurface,
                 )
+
+                Spacer(Modifier.height(16.dp))
+
+                // 放假那天整列不亮（课照旧列出，灰着）—— 判据是 dayIsLit，与日历页/周视图同一个
+                val lit = dayIsLit(selectedDate)
+                entries.forEach { entry ->
+                    CourseCard(
+                        course = entry,
+                        highlighted = entry.key == highlightedKey,
+                        dim = !lit,
+                        metaText = "${weekdayLabel(entry.weekday)} ${entry.periodLabel}" +
+                            entry.weeks.takeIf { it.isNotBlank() }?.let { " · $it" }.orEmpty(),
+                        // 点击 → 详情浮层：列的是**这一天**的课（与上面这份列表同一份数据）
+                        onClick = { onCourseClick(selectedDate, entries) },
+                        // 教务系统的课删不掉（下次同步又会回来），只有本地课给长按删除
+                        onLongClick = (entry as? CourseEntry.Local)?.let { local ->
+                            { pendingDelete = local.course }
+                        },
+                    )
+                    Spacer(Modifier.height(12.dp))
+                }
+
+                Spacer(Modifier.height(8.dp))
+
+                CampusButton(
+                    text = "添加课程",
+                    icon = AppIcons.Plus,
+                    onClick = { onAddCourse(selectedDay) },
+                    modifier = Modifier.fillMaxWidth(),
+                )
+
+                Spacer(Modifier.height(24.dp))
             }
         }
 
-        Spacer(Modifier.height(8.dp))
-
-        // 同步状态：登录后会按"登录的学校"去拉课表，这里把过程和失败原因说清楚
-        SyncStatusBanner()
-
-        // 教学周标签：和日历页月份标题下那一行是**同一个来源**，
-        // 让"两页看的是同一周"这件事一眼可见
-        WeekLabel()
-
-        // 节假日提示：放假那天**课表照旧列出当天的课，但一门都不点亮**（灰着），
-        // 不说一句"今天放假"的话，用户会以为这些课照常上
-        // ★ 放在门数那行**上面**、且自成一行：门数那行的文案（`周X · N 门课程`）
-        //   被真机测试 ScheduleCalendarParityTest 逐字对账，不能改也不能混进别的字
-        HolidayNotice(selectedDate)
-
-        Text(
-            text = "${weekdayLabel(selectedDay)} · ${entries.size} 门课程",
-            fontSize = 16.sp,
-            fontWeight = FontWeight.SemiBold,
-            lineHeight = 22.sp,
-            color = MaterialTheme.colorScheme.onSurface,
-        )
-
-        Spacer(Modifier.height(16.dp))
-
-        // 放假那天整列不亮（课照旧列出，灰着）—— 判据是 dayIsLit，与日历页/周视图同一个
-        val lit = dayIsLit(selectedDate)
-        entries.forEach { entry ->
-            CourseCard(
-                course = entry,
-                highlighted = entry.key == highlightedKey,
-                dim = !lit,
-                metaText = "${weekdayLabel(entry.weekday)} ${entry.periodLabel}" +
-                    entry.weeks.takeIf { it.isNotBlank() }?.let { " · $it" }.orEmpty(),
-                // 点击 → 详情浮层：列的是**这一天**的课（与上面这份列表同一份数据）
-                onClick = { onCourseClick(selectedDate, entries) },
-                // 教务系统的课删不掉（下次同步又会回来），只有本地课给长按删除
-                onLongClick = (entry as? CourseEntry.Local)?.let { local ->
-                    { pendingDelete = local.course }
-                },
-            )
-            Spacer(Modifier.height(12.dp))
-        }
-
-        Spacer(Modifier.height(8.dp))
-
-        CampusButton(
-            text = "添加课程",
-            icon = AppIcons.Plus,
-            onClick = { onAddCourse(selectedDay) },
-            modifier = Modifier.fillMaxWidth(),
-        )
-
-        Spacer(Modifier.height(24.dp))
+        // 刷不了的原因（本地调试账号等）：浮在底部，几秒后自己消失
+        RefreshNotice()
     }
 
     // 长按删除确认
@@ -250,13 +275,9 @@ private fun SyncStatusBanner() {
             },
             error = true,
             actionLabel = "重试",
-            onAction = {
-                CourseSync.sync(
-                    schoolId = SessionStore.schoolId.value ?: LoginSettings.selectedSchoolId.value,
-                    account = SessionStore.account.value,
-                    force = true,
-                )
-            },
+            // 和下拉刷新、页头按钮是**同一个入口**：三者都只是"再拉一次"的不同画法，
+            // 走两份实现的话，"哪些情况刷不了、刷不了说什么"迟早会各长一样
+            onAction = { DataRefresh.start() },
         )
         // ★ 登录过期不再把人赶回登录页：先把缓存的课表继续给他看。
         //   "重新登录"从"看数据的前提"降级成"刷新数据时才要做的事"

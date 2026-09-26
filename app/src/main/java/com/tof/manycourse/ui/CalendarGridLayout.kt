@@ -42,6 +42,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
@@ -50,6 +51,7 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.rememberTextMeasurer
@@ -464,6 +466,25 @@ internal fun CalendarGridLayout(
  *
  * 教学周只有一个（或一个都没有）时不画滑块：一格刻度既拖不动、也没有第二个选择，
  * 与其放一个死控件，不如只留文字。
+ *
+ * ## ★ 但滑块的**位置照留**：高度恒定
+ *
+ * 这一条是"课表部分大小不跟着界面变"的关键之一 ——
+ *
+ * ```
+ *   教学周还没拉到（首次登录、网络慢）→ 没有滑块 → 网格分到的高度多 48dp
+ *   教学周到了 → 滑块出现 → 网格分到的高度少 48dp → 课表整块缩一截
+ * ```
+ *
+ * 网格的行高是"**剩多少高 ÷ 行数**"算出来的（见 [GridBody]），所以上面这条链路
+ * 一定会让课表在数据到达的那一刻**整体变矮**：卡片变小、字被挤、位置全变 ——
+ * 而用户什么都没做。不支持按周查的学校（如金城学院）则永远停在"没有滑块"那一种高度上，
+ * 于是同一份课表在两台手机上大小还不一样。
+ *
+ * 做法**不写死高度**：始终组合这一个 `Slider`，用不了的时候给它
+ * `disabled + alpha(0) + 清掉语义` —— 占的仍是它自己那份高度（Material 控件内部多高，
+ * 由控件自己决定，换主题/换版本都不会量错），但看不见、点不动、也不会被读屏念出来
+ * （不是一个"死滑块"）。
  */
 @Composable
 private fun WeekSliderRow(
@@ -474,6 +495,9 @@ private fun WeekSliderRow(
 ) {
     val tokens = LocalGlassTokens.current
     val currentWeek = currentIndex?.let { weeks.getOrNull(it) }
+    // 至少两个周次才给滑（见上面注释）；位置与高度不受这个判断影响
+    val usable = weeks.size >= 2
+    val (value, lastIndex) = weekSliderState(weeks.size, currentIndex)
 
     Column(Modifier.fillMaxWidth()) {
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -492,22 +516,41 @@ private fun WeekSliderRow(
             )
         }
 
-        if (weeks.size >= 2) {
-            Slider(
-                value = (currentIndex ?: 0).toFloat(),
-                onValueChange = { value ->
-                    weeks.getOrNull(value.roundToInt())?.let(onWeekSelected)
-                },
-                valueRange = 0f..(weeks.size - 1).toFloat(),
-                // 一档 = 一周，拖到位就是整周（中间不停顿）
-                steps = (weeks.size - 2).coerceAtLeast(0),
-                colors = SliderDefaults.colors(
-                    thumbColor = tokens.accent,
-                    activeTrackColor = tokens.accent,
+        Slider(
+            value = value,
+            onValueChange = { raw -> weeks.getOrNull(raw.roundToInt())?.let(onWeekSelected) },
+            valueRange = 0f..lastIndex.toFloat(),
+            // 一档 = 一周，拖到位就是整周（中间不停顿）
+            steps = (weeks.size - 2).coerceAtLeast(0),
+            enabled = usable,
+            colors = SliderDefaults.colors(
+                thumbColor = tokens.accent,
+                activeTrackColor = tokens.accent,
+            ),
+            modifier = Modifier
+                .fillMaxWidth()
+                .then(
+                    if (usable) Modifier
+                    else Modifier.alpha(0f).clearAndSetSemantics { }
                 ),
-            )
-        }
+        )
     }
+}
+
+/**
+ * 周次滑块的位置与区间（纯函数，`WeekSliderStateTest` 钉住）。
+ *
+ * @return `value`（滑块停在哪一格）与 `lastIndex`（可滑到第几格，即 `valueRange` 的上界）
+ *
+ * 为什么值得单独拎出来：滑块现在**没有数据时也要占位**（见 [WeekSliderRow]），
+ * 于是"没有周次"这条路径也要给 Slider 一份**合法**参数 —— `valueRange = 0f..0f`
+ * 是被禁止的（区间为空，算比例时会得到 NaN）。这里统一兜住：
+ * 没有周次时退回一个"0..1、停在 0"的静态区间，看起来没区别，但不会踩到空区间。
+ */
+internal fun weekSliderState(weekCount: Int, currentIndex: Int?): Pair<Float, Int> {
+    val lastIndex = (weekCount - 1).coerceAtLeast(1)
+    val value = (currentIndex ?: 0).coerceIn(0, lastIndex)
+    return value.toFloat() to lastIndex
 }
 
 /**
@@ -1035,6 +1078,61 @@ private fun DayColumn(
 }
 
 /**
+ * 课名排版的两档字号与行高。
+ *
+ * 七列平分屏幕后**卡片只有 45dp 上下宽**（1080p、393dp 宽的机器上量出来是 46dp），
+ * 于是"一行放得下几个字"完全由字号决定：
+ *
+ * | 字号 | 一行放得下 | 说明 |
+ * |---|---|---|
+ * | 10sp | 3~4 个汉字 | 只用在这里：格子**高**（≥ [CompactCardRowHeight]）时，行数够，字号优先 |
+ * | 8.5sp | 4~5 个汉字 | 格子矮时用：**宁可字小一档，也要把课名显示全** |
+ *
+ * 为什么矮格子要缩小字号：课名是这张卡唯一的信息（时间由位置表示、地点在底部小字里），
+ * 而 `大学英语I（综合基础）`（11 字）、`中国近现代史纲要`（8 字）这类名字在 10sp 下
+ * 一行只放得下 3~4 个字，稍微一截就成了「大学英…」—— 用户根本认不出是哪门课。
+ * 缩小一档换来的正是"一行多一个字"，配合下面多给的行数，常见的课名都能显示全。
+ */
+private val NameFontSize = 10.sp
+private val NameLineHeight = 12.sp
+private val CompactNameFontSize = 8.5.sp
+private val CompactNameLineHeight = 9.5.sp
+
+/**
+ * 课名框的上下留白：高格子留 3dp（字大，行间要透气）；矮格子**一点不留**。
+ *
+ * 矮格子里这 2dp 正好是"能不能多画一行课名"的钱：8 行的密课表实测每格 46dp 上下，
+ * 课名框 34dp 出头 —— 3 行 × 9.5sp 需要 33.3dp，差的就是这点留白。
+ * 课名本来就是居中的，去掉上下留白不影响观感。
+ */
+private val NameBoxVerticalPadding = 3.dp
+private val CompactNameBoxVerticalPadding = 0.dp
+
+/**
+ * 课名最多画几行。
+ *
+ * 上限存在的意义只是"别把名字画成一整块竖排"（也让矮格子里的省略号出现在同一位置），
+ * 真正决定画几行的是课名框**实有多高**（[nameLineCount]）：
+ * 8 行的密课表里每格只有 46dp 上下，课名框约 30dp —— 那时两行就是全部。
+ */
+private const val NameLineMax = 4
+
+/**
+ * 课名能画几行（纯函数，`GridCardNameLinesTest` 钉住）。
+ *
+ * @param areaHeight 课名框的实高（`weight(1f)` 分到的那块，**不含**地点带）
+ * @param lineHeight 当前档位的一行多高（已经过 fontScale 换算）
+ *
+ * 至少 1 行：框再矮也得画一行（截断交给 `TextOverflow.Ellipsis`），
+ * 否则矮格子里课名会整块消失 —— 那比省略号更让人摸不着头脑。
+ */
+internal fun nameLineCount(areaHeight: Dp, lineHeight: Dp): Int {
+    val line = lineHeight.value
+    if (line <= 0f || !areaHeight.value.isFinite() || !line.isFinite()) return NameLineMax
+    return (areaHeight.value / line).toInt().coerceIn(1, NameLineMax)
+}
+
+/**
  * 网格里的课程卡片：课程色块 + 居中的课名 + 底部地点带（参考图的卡片就是这个结构）。
  *
  * 时间**故意不写**：纵向位置就是时间轴上的位置，再写一遍「第3-4节」是噪音 ——
@@ -1045,9 +1143,11 @@ private fun DayColumn(
  * 行高是整屏自适应算出来的（[GridBody]），所以卡片有时只有 48dp 上下（8 行）、
  * 有时高到 86dp（4 行）。两处跟着变：
  *  - [compact]（格子 < [CompactCardRowHeight]）：课名与地点带各收一档字号、留白收紧；
- *  - **课名画几行**由课名框的实高现算 —— **宁可少显示一行课名，也不能让地点被裁掉**：
- *    地点是"去哪儿上课"，课名看颜色和开头也认得出，裁掉地点就真的少信息了。
- *    课名区用 `weight(1f)` 先让位，地点带永远留在卡片底部。
+ *    ★ 课名这一档收得比地点带更狠（10sp → 8.5sp）：卡片只有 45dp 宽，
+ *      字号直接决定"一行放得下几个字"，矮格子里宁可字小也要把课名显示全；
+ *  - **课名画几行**由课名框的实高现算（[nameLineCount]）—— **宁可少显示一行课名，
+ *    也不能让地点被裁掉**：地点是"去哪儿上课"，课名看颜色和开头也认得出，
+ *    裁掉地点就真的少信息了。课名区用 `weight(1f)` 先让位，地点带永远留在卡片底部。
  *
  * @param card [GridCard.dim] = true 的目标面貌是灰调（这一周不上）。**换周时不是瞬间换色**：
  *   底色 / 地点带 / 字色按 [rememberGridCardFace] 的进度一起插值，于是"亮↔灰"是淡入淡出，
@@ -1112,16 +1212,19 @@ private fun GridCourseCard(
             Modifier
                 .weight(1f)
                 .fillMaxWidth()
-                .padding(horizontal = 2.dp, vertical = if (compact) 1.dp else 3.dp),
+                .padding(
+                    horizontal = 2.dp,
+                    vertical = if (compact) CompactNameBoxVerticalPadding else NameBoxVerticalPadding,
+                ),
             contentAlignment = Alignment.Center,
         ) {
-            val nameFontSize = if (compact) 9.5.sp else 10.sp
-            val nameLineHeight = if (compact) 11.sp else 12.sp
+            val nameFontSize = if (compact) CompactNameFontSize else NameFontSize
+            val nameLineHeight = if (compact) CompactNameLineHeight else NameLineHeight
             // 行数按**这个框真有多高**算：框里放得下几行就画几行。
             // 写死 maxLines 在格子矮时会把最后一行裁掉半截（比省略号更难看），
             // 写死 1 行又浪费高格子 —— 所以让行数跟着格子走，这是"任何字号都不裁字"的那一处
             val nameLineHeightDp = with(LocalDensity.current) { nameLineHeight.toDp() }
-            val nameLines = (maxHeight / nameLineHeightDp).toInt().coerceIn(1, 3)
+            val nameLines = nameLineCount(maxHeight, nameLineHeightDp)
 
             Text(
                 text = entry.name,

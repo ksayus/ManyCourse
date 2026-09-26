@@ -25,6 +25,7 @@ import dev.chrisbanes.haze.hazeSource
 import com.tof.manycourse.data.CourseEntry
 import com.tof.manycourse.ui.AddCourseScreen
 import com.tof.manycourse.ui.CourseDetailDialog
+import com.tof.manycourse.ui.RefreshButton
 import com.tof.manycourse.ui.ScheduleScreen
 import com.tof.manycourse.ui.UpdateHost
 import com.tof.manycourse.ui.components.GlassBottomNav
@@ -66,7 +67,13 @@ class ClassScheduleFragment : Fragment() {
                         LiquidGlassBackground(animate = backgroundAnimating)
                     }
                     Column(Modifier.fillMaxSize()) {
-                        GlassHeader(hazeState, "本周课表")
+                        // 页头右侧的刷新按钮：课表页能下拉刷新，但"下拉"是个手势 ——
+                        // 按钮是那条"一定能点到"的路（也顺带把状态条上的「重试」摆到了明面上）
+                        GlassHeader(
+                            hazeState,
+                            "本周课表",
+                            actions = { RefreshButton() },
+                        )
                         Box(
                             Modifier
                                 .weight(1f)
