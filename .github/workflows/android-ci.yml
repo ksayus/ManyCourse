@@ -78,9 +78,33 @@ jobs:
           SDKMANAGER=$(command -v sdkmanager || find "$ANDROID_HOME/cmdline-tools" -name sdkmanager -type f | head -n1)
           if [ -z "$SDKMANAGER" ]; then echo "❌ 找不到 sdkmanager（runner 镜像变了吗？）"; exit 1; fi
           echo "sdkmanager: $SDKMANAGER"
-          yes | "$SDKMANAGER" --licenses > /dev/null || true
-          # 补装 AGP 声明的平台与构建工具（compileSdk 37 / build-tools 36）；已装过会秒退
-          "$SDKMANAGER" --install 'platform-tools' 'platforms;android-37' 'build-tools;36.0.0'
+          # 先把 license 全接受掉；`yes` 被提前关掉管道会喊 "Broken pipe"，整段丢 stderr 图个清静
+          { yes | "$SDKMANAGER" --licenses > /dev/null; } 2>/dev/null || true
+
+          # ── 平台包名**不是** `platforms;android-37` ────────────────────────────────
+          # Google 从 API 36 起改成按"次版本"发布平台，包名里带次版本号：API 37（Android 17）
+          # 在仓库索引里叫 **platforms;android-37.0** —— 装完就是 `platforms/android-37.0/`，
+          # 那个目录的 source.properties 里写着 `AndroidVersion.ApiLevel=37.0`。
+          # 写成 android-37 会得到：
+          #   Warning: Failed to find package 'platforms;android-37'
+          # 然后 sdkmanager 以 1 退出、整个 job 挂在这一步（2026-09 起必现）。
+          # 所以这里不写死名字：直接从仓库索引里挑出真实存在的最新 android-37.x，
+          # 以后 Google 再改命名/再发 37.1 都不用动这个文件。
+          PLATFORM=$("$SDKMANAGER" --list 2>/dev/null | tr -d '\r' | awk '{print $1}' \
+            | grep -E '^platforms;android-37(\.[0-9]+)?$' | sort -V | tail -n1 || true)
+          if [ -z "$PLATFORM" ]; then
+            # 兜底：万一 --list 的输出格式变了导致没抓到，退回最可能的名字硬试一次，
+            # 顺便把索引里真实存在的平台打出来，下次一眼能看出该改哪个名字
+            echo "⚠️  索引里没匹配到 android-37.x，退回硬编的 platforms;android-37.0 试一次"
+            echo "    索引里现有的平台："
+            "$SDKMANAGER" --list 2>/dev/null | tr -d '\r' | awk '{print $1}' \
+              | grep -E '^platforms;' | sort -u || true
+            PLATFORM='platforms;android-37.0'
+          fi
+          echo "要装的平台：$PLATFORM"
+          # build-tools 固定 36.0.0：AGP 9.3 + compileSdk 37 用它能出包
+          # （本地 SDK 里只装了 platforms/android-37.0 + build-tools/36.0.0，debug/release 都出得来）
+          "$SDKMANAGER" --install 'platform-tools' "$PLATFORM" 'build-tools;36.0.0'
 
       - name: Show toolchain versions
         run: |
@@ -172,8 +196,19 @@ jobs:
           SDKMANAGER=$(command -v sdkmanager || find "$ANDROID_HOME/cmdline-tools" -name sdkmanager -type f | head -n1)
           if [ -z "$SDKMANAGER" ]; then echo "❌ 找不到 sdkmanager（runner 镜像变了吗？）"; exit 1; fi
           echo "sdkmanager: $SDKMANAGER"
-          yes | "$SDKMANAGER" --licenses > /dev/null || true
-          "$SDKMANAGER" --install 'platform-tools' 'platforms;android-37' 'build-tools;36.0.0'
+          # license 全接受（`yes` 的 Broken pipe 噪音丢掉）；平台包名的坑见 build job 里的长注释：
+          # API 37 在仓库里叫 platforms;android-37.0，写 android-37 会 Failed to find package
+          { yes | "$SDKMANAGER" --licenses > /dev/null; } 2>/dev/null || true
+          PLATFORM=$("$SDKMANAGER" --list 2>/dev/null | tr -d '\r' | awk '{print $1}' \
+            | grep -E '^platforms;android-37(\.[0-9]+)?$' | sort -V | tail -n1 || true)
+          if [ -z "$PLATFORM" ]; then
+            echo "⚠️  索引里没匹配到 android-37.x，退回硬编的 platforms;android-37.0 试一次"
+            "$SDKMANAGER" --list 2>/dev/null | tr -d '\r' | awk '{print $1}' \
+              | grep -E '^platforms;' | sort -u || true
+            PLATFORM='platforms;android-37.0'
+          fi
+          echo "要装的平台：$PLATFORM"
+          "$SDKMANAGER" --install 'platform-tools' "$PLATFORM" 'build-tools;36.0.0'
 
       - name: Grant execute permission for gradlew
         run: chmod +x gradlew
@@ -373,6 +408,52 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      # ── 为什么要有这一步：Pages 站点必须先由**人**打开一次 ────────────────────
+      # 仓库没开 Pages 时，`configure-pages` 只会甩一句
+      #   "Get Pages site failed ... Error: Not Found"（找不到"该由你创建的东西"）
+      # 它自带的 `enablement: true` 也救不了：**创建 Pages 站点是仓库管理级操作，
+      # GITHUB_TOKEN 永远没有这个权限**（写什么 `permissions:` 都没用，这是故意的安全边界），
+      # 加了只会换成另一句更费解的 "Resource not accessible by integration"。
+      # 一次性的人工操作（只需点一下，之后每次推送都自动部署）：
+      #   Settings → Pages → Build and deployment → Source 选「GitHub Actions」
+      # 这一步提前把话说清楚，省得你对着 Not Found 查半天工作流。
+      - name: Check Pages is enabled
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          # curl 自己失败（断网等）不算错误，交给下面的最后一条分支处理
+          resp=$(curl -sS \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            -w '\n%{http_code}' \
+            "https://api.github.com/repos/${{ github.repository }}/pages" || true)
+          code=$(printf '%s' "$resp" | tail -n1)
+          body=$(printf '%s' "$resp" | sed '$d')
+          case "$code" in
+            200)
+              build_type=$(printf '%s' "$body" \
+                | python3 -c "import sys,json;print(json.load(sys.stdin).get('build_type',''))" 2>/dev/null || true)
+              if [ "$build_type" != "workflow" ]; then
+                echo "❌ Pages 站点存在，但 Source 不是「GitHub Actions」（当前 build_type='$build_type'）。"
+                echo "   打开 https://github.com/${{ github.repository }}/settings/pages"
+                echo "   → Build and deployment → Source 改成「GitHub Actions」→ 回来重跑本 job。"
+                exit 1
+              fi
+              echo "✅ Pages 站点已就绪（build_type=workflow）"
+              ;;
+            404)
+              echo "❌ 仓库还没有 Pages 站点，所以 configure-pages 报 'Not Found'。"
+              echo "   打开 https://github.com/${{ github.repository }}/settings/pages"
+              echo "   → Build and deployment → Source 选「GitHub Actions」→ 回来重跑本 job。"
+              echo "   （只需点这一次。这一步 GITHUB_TOKEN 代替不了：创建 Pages 站点是仓库管理级操作。）"
+              exit 1
+              ;;
+            *)
+              echo "⚠️  查询 Pages 状态返回 HTTP '${code:-无响应}'，判断不了，继续交给 configure-pages"
+              ;;
+          esac
 
       - name: Configure Pages
         uses: actions/configure-pages@v5
