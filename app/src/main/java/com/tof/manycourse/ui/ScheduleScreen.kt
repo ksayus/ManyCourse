@@ -41,6 +41,8 @@ import com.tof.manycourse.data.coursesOfDate
 import com.tof.manycourse.data.dateOfCurrentWeek
 import com.tof.manycourse.data.nextCourseKey
 import com.tof.manycourse.data.weekdayLabel
+import com.tof.manycourse.data.ScheduleCache
+import com.tof.manycourse.data.formatCacheTime
 import com.tof.manycourse.ui.components.CampusButton
 import com.tof.manycourse.ui.components.CampusChip
 import com.tof.manycourse.ui.components.CourseCard
@@ -208,8 +210,10 @@ private fun WeekLabel() {
  *  - 同步中 → 提示正在拉；
  *  - 失败 → **红字 + 重试**，把"为什么没有课表"讲清楚（教务系统挂了 / 接口改版，
  *    表现都是"课表空着"，不提示的话用户只会以为 App 坏了）；
- *  - **登录过期 → 红字 + 重新登录**。这一条必须和"失败"分开：
- *    登录态失效时反复点重试是点不好的，得把用户送回登录页；
+ *  - **登录过期 → 有缓存时是"继续看缓存"+「重新登录以刷新」**（页面不跳走），
+ *    没缓存才退回"红字 + 重新登录"。这一条必须和"失败"分开：
+ *    登录态失效时反复点重试是点不好的；
+ *  - **没在同步但有缓存 → 「离线课表 · 最后更新 …」**（TTL 内跳过联网 / 本地调试时不联网）；
  *  - 成功 → 一行来源说明，让人知道课表是从学校系统来的；
  *  - 本地调试 / 手动录课 → 什么都不显示。
  */
@@ -219,13 +223,21 @@ private fun SyncStatusBanner() {
     val tokens = LocalGlassTokens.current
     val context = LocalContext.current
 
+    // 磁盘上那份课表的写入时刻（读 Compose 状态，写盘后这条会自动重组）
+    val cachedAt = ScheduleCache.savedAt.value
+    val cachedLabel = cachedAt?.let(::formatCacheTime)
+
     // (文案, 是否红色, 按钮文案 or null, 点击行为)
     val banner: Banner? = when (state) {
         is CourseSync.State.Loading -> Banner("正在从教务系统同步课表…", false)
         is CourseSync.State.Ready ->
             Banner("课表来源：${state.studentName} · 已同步 ${state.courses} 门课程", false)
         is CourseSync.State.Failed -> Banner(
-            text = state.message,
+            text = if (cachedLabel != null) {
+                "${state.message}（当前显示 $cachedLabel 的缓存课表）"
+            } else {
+                state.message
+            },
             error = true,
             actionLabel = "重试",
             onAction = {
@@ -236,15 +248,30 @@ private fun SyncStatusBanner() {
                 )
             },
         )
-        CourseSync.State.Expired -> Banner(
-            text = "登录已过期，请重新登录",
-            error = true,
-            actionLabel = "重新登录",
-            onAction = { context.logoutAndBackToLogin() },
-        )
-        CourseSync.State.Idle -> null
+        // ★ 登录过期不再把人赶回登录页：先把缓存的课表继续给他看。
+        //   "重新登录"从"看数据的前提"降级成"刷新数据时才要做的事"
+        CourseSync.State.Expired -> if (cachedLabel != null) {
+            Banner(
+                text = "登录已过期 · 正在显示 $cachedLabel 的缓存课表",
+                error = true,
+                actionLabel = "重新登录以刷新",
+                onAction = { context.logoutAndBackToLogin() },
+            )
+        } else {
+            // 这台机器上没缓存：老行为，只能重新登录
+            Banner(
+                text = "登录已过期，请重新登录",
+                error = true,
+                actionLabel = "重新登录",
+                onAction = { context.logoutAndBackToLogin() },
+            )
+        }
+        // 没在同步、也没报错，但有缓存 → 说明这就是一份离线课表
+        CourseSync.State.Idle -> cachedLabel?.let { Banner("离线课表 · 最后更新 $it", false) }
     }
 
+    // ★ 这个渲染块是"状态条真的会显示"的唯一保证 —— 上面那个 `when` 只是**算**出内容，
+    //   少了下面这几行，banner 算得再对也不会画出来（"正在同步…"「重试」「重新登录以刷新」全都消失）
     if (banner == null) return
 
     Row(

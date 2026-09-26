@@ -115,6 +115,7 @@ object SessionStore {
         isLocalDebug.value = localDebug
         ProfileRepository.bindAccount(school, userAccount)
         CourseSync.reset()
+        ScheduleCache.prime(school, userAccount)
         persist()
     }
 

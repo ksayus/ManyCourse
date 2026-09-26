@@ -26,10 +26,10 @@ android {
         versionCode = (providers.gradleProperty("versionCode").orNull ?: "1").toInt()
 
         // 第一个版本位是大版本,比如重构UI界面,增加重大功能
-        // 第二个版本位是小版本更新,比如添加性能
+        // 第二个版本位是小版本更新,比如添加功能,数字增加的量代表新功能的数量
         // 第三个版本位是Bug修复,数字代表已经修复的Bug数量
         // 第四个版本位是支持的学校数量
-        versionName = providers.gradleProperty("versionName").orNull ?: "1.0.0.3"
+        versionName = providers.gradleProperty("versionName").orNull ?: "1.3.0.3"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -89,6 +89,20 @@ android {
     }
     buildFeatures {
         compose = true
+    }
+
+    /**
+     * Lint 的落点（`gradlew build` 与 IDE 的 check 都会跑 lint，**lint 报错会直接中止构建**）。
+     *
+     * `MissingTranslation` 从 error **降级为 warning**：
+     * 本应用是**中文单语**的 —— `values/strings.xml` 里写的就是中文（默认语言即中文），
+     * `values-zh/` 只刻意覆盖 `app_name`（中文系统显示「课多多」、其它语言回退成 "ManyCourse"，
+     * 见那个文件自己的注释）。所以"缺中文翻译"对这批字符串是**误报**。
+     *
+     * 降级而不是关掉：以后真要做多语言时，这条提醒还在。
+     */
+    lint {
+        warning += "MissingTranslation"
     }
 }
 

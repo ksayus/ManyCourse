@@ -26,6 +26,7 @@ import com.tof.manycourse.data.CourseEntry
 import com.tof.manycourse.ui.AddCourseScreen
 import com.tof.manycourse.ui.CourseDetailDialog
 import com.tof.manycourse.ui.ScheduleScreen
+import com.tof.manycourse.ui.UpdateHost
 import com.tof.manycourse.ui.components.GlassBottomNav
 import com.tof.manycourse.ui.components.GlassHeader
 import com.tof.manycourse.ui.components.LiquidGlassBackground
@@ -107,6 +108,9 @@ class ClassScheduleFragment : Fragment() {
                         courses = detailCourses,
                         onDismiss = { showDetail = false },
                     )
+                    // 自动更新：静默查一次，有新版本就弹窗。挂在本页是因为四个页面**常驻组合**，
+                    // 而 AlertDialog 是独立窗口 —— 无论当前在哪个 Tab，弹窗都浮在最上面
+                    UpdateHost()
                 }
             }
         }

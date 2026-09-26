@@ -86,6 +86,9 @@ object WeekScheduleStore {
     /** 上次同步的「学校 + 账号」，用来避免转屏/重进页面时重复拉 */
     private var lastKey: String? = null
 
+    private var syncedSchoolId: String? = null
+    private var syncedAccount: String = ""
+
     private val mainHandler = Handler(Looper.getMainLooper())
 
     /** 当前登录学校支持"按周查课表"吗（不支持就返回 null，调用方静默跳过）*/
@@ -113,6 +116,8 @@ object WeekScheduleStore {
         val alreadyDone = state.value is State.Ready || state.value is State.Loading
         if (!force && key == lastKey && alreadyDone) return
         lastKey = key
+        syncedSchoolId = schoolId
+        syncedAccount = account
 
         state.value = State.Loading
         // 代数 +1：上一次同步留在路上的请求（列表 + 各周课程）全部作废，
@@ -129,6 +134,7 @@ object WeekScheduleStore {
                         pendingWeeks.clear()
                         queue.clear()
                         state.value = State.Ready(list.size)
+                        persistWeekSchedule()
                         // 顺手把"今天"那一周拉回来：用户切到日历页立刻就有内容
                         weekOf(LocalDate.now())?.let { ensureWeek(it.index) }
                     },
@@ -186,7 +192,10 @@ object WeekScheduleStore {
                     inFlight--
                     pendingWeeks.remove(week)
                     result.fold(
-                        onSuccess = { coursesByWeek[week] = it },
+                        onSuccess = {
+                            coursesByWeek[week] = it
+                            if (queue.isEmpty() && inFlight == 0) persistWeekSchedule()
+                        },
                         onFailure = { error ->
                             if (error is SessionExpiredException) state.value = State.Expired
                             // 单周失败不外抛：这一周渲染时回落到本地课表即可，
@@ -226,11 +235,42 @@ object WeekScheduleStore {
     fun coursesOn(date: LocalDate): List<SchoolCourse>? =
         weekCoursesOf(date)?.filter { it.weekday == date.dayOfWeek.value }
 
+    /**
+     * 用磁盘上的快照灌课表（由 [ScheduleCache.prime] 读盘后调用）。
+     *
+     * ★ **必须在主线程调**（写的是 Compose 状态）。
+     *
+     * ★ 这里**故意不碰 `generation`**：调用时机是"刚进主界面、网络还没发出去"，
+     * 没有在飞的请求需要作废；真要有，让它回来覆盖反而更新。
+     */
+    fun restore(weeks: List<SchoolWeek>, coursesByWeek: Map<Int, List<SchoolCourse>>) {
+        if (weeks.isEmpty()) return
+        this.weeks.clear()
+        this.weeks.addAll(weeks)
+        this.coursesByWeek.clear()
+        this.coursesByWeek.putAll(coursesByWeek)
+        pendingWeeks.clear()
+        queue.clear()
+        inFlight = 0
+        // ★ 关键：`lastKey` 保持 null。若设成"当前学校+账号"，sync() 会认为
+        //   "已经同步过"直接返回 —— 那这份缓存就永远不会被刷新了
+        state.value = State.Ready(weeks.size)
+    }
+
+    /** 把当前的教学周 + 已拉到的周课表写进磁盘快照 */
+    private fun persistWeekSchedule() {
+        val school = syncedSchoolId ?: return
+        if (syncedAccount.isBlank() || weeks.isEmpty()) return
+        ScheduleCache.saveWeekSchedule(school, syncedAccount, weeks.toList(), coursesByWeek.toMap())
+    }
+
     /** 退出登录：连教学周一起清掉（否则下一个账号会看到上一个人的课表）*/
     fun clearOnLogout() {
         // 代数 +1：在飞的那几个请求回来时会被认成"上一个人的数据"而丢弃
         generation++
         lastKey = null
+        syncedSchoolId = null
+        syncedAccount = ""
         pendingWeeks.clear()
         queue.clear()
         coursesByWeek.clear()

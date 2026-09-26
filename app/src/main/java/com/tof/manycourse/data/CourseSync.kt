@@ -72,11 +72,14 @@ object CourseSync {
             state.value = State.Failed("没有记录到登录的学校，请退出后重新登录")
             return
         }
+        val school: String = schoolId
         if (account.isBlank()) {
             state.value = State.Failed("没有记录到登录账号，请退出后重新登录")
             return
         }
 
+        // 缓存够新就先不联网（下拉刷新走 force=true 绕开它）
+        if (!force && ScheduleCache.isFresh(6 * 60 * 60 * 1000L) && state.value is State.Idle) return
         val key = "$schoolId|$account"
         // 失败/过期时不拦：转屏或再次进入主界面都允许自动重来一次
         val alreadyDone = state.value is State.Ready || state.value is State.Loading
@@ -117,7 +120,12 @@ object CourseSync {
                         schedule.fold(
                             onSuccess = { list ->
                                 CourseRepository.replaceAll(list)
-                                state.value = State.Ready(list.size, name.ifBlank { account })
+                                val source = name.ifBlank { account }
+                                state.value = State.Ready(list.size, source)
+                                // ★ 落盘：下次登录过期 / 断网时，ScheduleCache.prime 就是靠它把课表还给用户。
+                                //   第二个参数必须是**账号**（缓存按「学校id|账号」分档）——
+                                //   传成 schoolId 的话档位会变成"学校|学校"，prime 永远找不到这份缓存
+                                ScheduleCache.saveCourses(school, account, list, source)
                                 // 教务系统在访问过程中会续期 Cookie，同步成功顺手刷新存档，
                                 // 让下次冷启动拿到的会话尽可能新鲜
                                 SessionStore.persist()
@@ -157,6 +165,7 @@ object CourseSync {
         ProfileRepository.onLogout()
         CourseRepository.clear()
         WeekScheduleStore.clearOnLogout()
+        ScheduleCache.clearMemory()
     }
 
     private fun Result<*>.isSessionExpired(): Boolean =

@@ -1,6 +1,7 @@
 package com.tof.manycourse.ui
 
 import android.Manifest
+import android.annotation.SuppressLint
 import android.content.Context
 import android.content.pm.PackageManager
 import android.location.Location
@@ -63,7 +64,13 @@ internal object CampusLocation {
         val manager = context.getSystemService(LocationManager::class.java) ?: return null
         val provider = bestProvider(context, manager) ?: return null
         val location = withTimeoutOrNull(timeoutMs) { awaitOneFix(context, manager, provider) } ?: return null
-        return DeviceLocation(latitude = location.latitude, longitude = location.longitude)
+        return DeviceLocation(
+            latitude = location.latitude,
+            longitude = location.longitude,
+            // `Location.accuracy` 在没有精度信息时返回 0（不是 null）——
+            // 0 米是"不可能"的精度，当成"不知道"更诚实（见 MapPointAccuracyHint）
+            accuracyMeters = location.accuracy.takeIf { it > 0f },
+        )
     }
 
     /**
@@ -96,7 +103,12 @@ internal object CampusLocation {
      * `getCurrentLocation` 自己有缓存就直接回调，没缓存才真去定位；传进去的
      * [CancellationSignal] 在协程被取消（= 超时）时 `cancel()`，**不留后台定位**。
      * 服务端给不出位置时回调参数会是 null，这里如实返回 null。
+     *
+     * ★ `@SuppressLint("MissingPermission")`：权限在 [currentLocation] 开头已经查过
+     * （没有就直接返回 null，走不到这里），而这里还包了 `runCatching` ——
+     * 权限被中途撤销只会得到 null，不会崩。lint 看不穿"跨方法的检查"。
      */
+    @SuppressLint("MissingPermission")
     private suspend fun awaitOneFix(
         context: Context,
         manager: LocationManager,

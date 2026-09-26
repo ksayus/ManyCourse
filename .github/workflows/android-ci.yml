@@ -128,6 +128,13 @@ jobs:
     timeout-minutes: 40
     permissions:
       contents: write # 创建 Release 需要
+    # 下面两个用来发 Gitee 版（**可选**，没配就跳过那一步）：
+    #   Variables → GITEE_REPO = owner/repo
+    #   Secrets   → GITEE_TOKEN = Gitee 私人令牌（勾 projects 权限）
+    # 放在 job 级 env 上是为了能在 step 的 if 里判断 —— GitHub 的 if 条件**读不到 secrets**。
+    env:
+      GITEE_REPO: ${{ vars.GITEE_REPO }}
+      GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
 
     steps:
       - name: Checkout
@@ -184,12 +191,15 @@ jobs:
       - name: Resolve version
         id: version
         run: |
-          # tag v1.2.3 → versionName 1.2.3；手动触发没给 tag 就用 run number 兜底
+          # tag v1.2.3 → versionName 1.2.3；手动触发没给 tag 就用 run number 兜底。
+          # 兼容**没有 v 前缀**的历史 tag（本仓库第一个版本就是 1.0.0.3）——
+          # 否则手动重发那一次会得到 versionName=0.0.<run>，APK 名字和 App 里显示的版本全错。
           ref="${{ inputs.tag || github.ref_name }}"
-          case "$ref" in
-            v*) version="${ref#v}" ;;
-            *)  version="0.0.${{ github.run_number }}" ;;
-          esac
+          if [[ "$ref" =~ ^v?[0-9]+(\.[0-9]+)+$ ]]; then
+            version="${ref#v}"
+          else
+            version="0.0.${{ github.run_number }}"
+          fi
           echo "name=$version" >> "$GITHUB_OUTPUT"
           echo "versionName=$version"
 
@@ -253,6 +263,71 @@ jobs:
             ManyCourse-${{ steps.version.outputs.name }}.apk
             apk.sha256
           fail_on_unmatched_files: true
+
+      # ── Gitee 版（可选）────────────────────────────────────────────────
+      # 为什么必须单独做一遍：**GitHub Release 与 Gitee Release 是两套独立的东西**，
+      # 往 GitHub 推 tag 不会自动出现在 Gitee。而应用的自动更新两个源都查，
+      # 所以两边都得有同一份 `ManyCourse-<版本>.apk`。
+      #
+      # 没配 `vars.GITEE_REPO` / `secrets.GITEE_TOKEN` 时这两步**直接跳过**，
+      # 不会让发布失败（只发 GitHub 也能用，App 侧只会用到 GitHub 源）。
+      - name: Ensure Gitee has this tag
+        if: env.GITEE_REPO != '' && env.GITEE_TOKEN != ''
+        env:
+          TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          set -euo pipefail
+          api="https://gitee.com/api/v5/repos/${GITEE_REPO}"
+          # Gitee 建 Release 要求 tag 存在；而 CI 只在 GitHub 上跑，不会自动把 tag 推过去 ——
+          # 不补这一步的话，发版时 Gitee 那半会静默失败（下一次才知道更新没发出去）
+          has_tag=$(curl -sS "${api}/tags?per_page=100" \
+            | python3 -c "import sys,json;d=json.load(sys.stdin);print('1' if any(t.get('name')=='${TAG}' for t in d) else '0')" || echo 0)
+          if [ "${has_tag}" = "1" ]; then
+            echo "Gitee 上已有 tag ${TAG}"
+            exit 0
+          fi
+          echo "Gitee 上没有 tag ${TAG}，推过去…"
+          # 令牌只出现在这一步的 remote URL 里；runner 是一次性的，跑完就没了
+          # （GitHub 会自动把日志里的 secret 值打码，所以不会漏到日志里）
+          git remote add gitee "https://oauth2:${GITEE_TOKEN}@gitee.com/${GITEE_REPO}.git"
+          git push gitee "refs/tags/${TAG}"
+
+      - name: Publish Gitee Release
+        if: env.GITEE_REPO != '' && env.GITEE_TOKEN != ''
+        env:
+          VERSION: ${{ steps.version.outputs.name }}
+          TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          set -euo pipefail
+          api="https://gitee.com/api/v5/repos/${GITEE_REPO}"
+          auth=(-H "Authorization: Bearer ${GITEE_TOKEN}")
+
+          # 1) 已经有同 tag 的 Release 就复用（重复触发同一次发布时不至于报错）
+          release_id=$(curl -sS "${auth[@]}" "${api}/releases?per_page=100" \
+            | python3 -c "import sys,json;d=json.load(sys.stdin);print(next((r['id'] for r in d if r.get('tag_name')=='${TAG}'),''))" || true)
+
+          # 2) 没有就建一个（**不带 target_commitish**：上一步已经确保 tag 在 Gitee 上了，
+          #    再传一个 commit-ish 反而多一个可能被拒的参数）
+          if [ -z "${release_id}" ]; then
+            release_id=$(curl -sS -X POST "${auth[@]}" \
+              -H "Content-Type: application/json" \
+              -d "{\"access_token\":\"${GITEE_TOKEN}\",\"tag_name\":\"${TAG}\",\"name\":\"ManyCourse ${VERSION}\",\"body\":\"与 GitHub Release ${TAG} 同一份产物。\"}" \
+              "${api}/releases" \
+              | python3 -c "import sys,json;print(json.load(sys.stdin).get('id',''))")
+          fi
+          if [ -z "${release_id}" ]; then
+            echo "❌ 建 Gitee Release 失败（检查 GITEE_TOKEN 的 projects 权限、以及 GITEE_REPO 是否存在）"
+            exit 1
+          fi
+
+          # 3) 传附件（multipart，字段名固定是 file）
+          for file in "ManyCourse-${VERSION}.apk" apk.sha256; do
+            echo "上传 ${file} …"
+            curl -sS -X POST "${auth[@]}" \
+              -F "file=@${file}" \
+              "${api}/releases/${release_id}/attach_files" > /dev/null
+          done
+          echo "✅ Gitee Release ${TAG} 已发布：https://gitee.com/${GITEE_REPO}/releases/tag/${TAG}"
 
   # ══════════════════════════════════════════════════════════════════════════
   # 3) 持续部署：下载页上 Pages

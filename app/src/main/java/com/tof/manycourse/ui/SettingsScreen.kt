@@ -159,6 +159,18 @@ private fun SettingsContent() {
         SectionLabel("通知")
         NotificationCard()
 
+        Spacer(Modifier.height(20.dp))
+
+        SectionLabel("关于与更新")
+        UpdateCheckCard()
+        Spacer(Modifier.height(12.dp))
+        UpdateSourceCard()
+
+        Spacer(Modifier.height(20.dp))
+
+        SectionLabel("开发者")
+        DevModeCard()
+
         Spacer(Modifier.height(24.dp))
     }
 }
@@ -289,6 +301,30 @@ private fun NotificationCard() {
         checked = enabled,
         switchDesc = "通知提醒开关",
         onCheckedChange = { UiSettings.setNotificationsEnabled(it) },
+    )
+}
+
+/**
+ * **开发者模式**开关：打开后地图页多出「原地采点 / 图上采点 / 标定 / 点位面板」，
+ * 采集到的点位与标定自动写到系统根目录下的 `ManyCourse/`。
+ *
+ * 放在设置页而不是地图页上藏一个"长按标题"入口：它改的是**数据采集**行为，
+ * 只有自己知道在干什么时才该打开；藏起来的结果是别人偶然打开、然后一脸茫然地
+ * 对着采集按钮（更糟的是采出一堆半真半假的数据）。
+ *
+ * 采集本身在 `ui/DevModePanel.kt`，存储与格式在 `data/MapPointStore.kt` /
+ * `data/MapPointCodec.kt`。
+ */
+@Composable
+private fun DevModeCard() {
+    val enabled by UiSettings.devMode
+    SettingSwitchCard(
+        title = "开发者模式",
+        subtitle = if (enabled) "地图页已显示点位采集与标定工具" else "已关闭，地图页是普通界面",
+        hint = "用于实地采集校区点位（教室 / 楼栋）和地图标定；数据存到本机 ManyCourse 目录，不上传",
+        checked = enabled,
+        switchDesc = "开发者模式开关",
+        onCheckedChange = { UiSettings.setDevMode(it) },
     )
 }
 

@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?><!--
+  FileProvider 对外暴露的目录清单（**只列更新包那一个子目录**）。
+
+  自动更新下载完 APK 之后要把它交给系统安装器，而 Android 7.0 起不再允许传 file:// 路径
+  （FileUriExposedException），必须走 content:// 加临时授权。这里声明"哪些目录可以被授权"：
+  范围越窄越好 —— 只放 updates/，应用里的其它文件（含私有目录里那些）一个都不暴露。
+
+  external-files-path：getExternalFilesDir(null)，正常情况用的就是这个，
+    实际路径是 Android/data/包名/files/updates/（不需要任何权限）；
+  cache-path：getCacheDir()，兜底用（外部专属目录不可用时，比如存储没挂载）。
+
+  两条路径里的 path 都必须与 UpdateDownloader.directory() 里用的 updates 一致 ——
+  不一致的表现是安装那一步才炸：IllegalArgumentException: Failed to find configured root。
+
+  注意：本文件是 XML，注释里**不能出现连续两个减号**（AAPT2 会直接报解析错误）。
+-->
+<paths>
+    <external-files-path name="updates" path="updates/" />
+    <cache-path name="update_cache" path="updates/" />
+</paths>

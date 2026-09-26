@@ -48,6 +48,8 @@ import com.tof.manycourse.data.UiSettings
 import com.tof.manycourse.data.WeekScheduleStore
 import com.tof.manycourse.data.coursesOfDate
 import com.tof.manycourse.data.naturalWeekOf
+import com.tof.manycourse.data.ScheduleCache
+import com.tof.manycourse.data.formatCacheTime
 import com.tof.manycourse.ui.components.CourseCard
 import com.tof.manycourse.ui.components.GlassCard
 import com.tof.manycourse.ui.theme.LocalGlassTokens
@@ -479,22 +481,33 @@ private fun EmptyDayCard(text: String = "当日无课") {
 private fun WeekSourceHint(schoolId: String?, fromWeekApi: Boolean) {
     val context = LocalContext.current
     val state = WeekScheduleStore.state.value
+    val cachedAt = ScheduleCache.savedAt.value
+    val cachedLabel = cachedAt?.let(::formatCacheTime)
     val text: String
     val error: Boolean
     val action: Pair<String, () -> Unit>?
 
     when {
         fromWeekApi -> {
-            text = "课表来源：教务系统 · 周次课表（与「课表」页同一份数据）"
-            error = false
-            action = null
+            val stale = state is WeekScheduleStore.State.Expired
+            text = when {
+                !stale -> "课表来源：教务系统 · 周次课表（与「课表」页同一份数据）"
+                cachedLabel != null -> "课表来源：教务系统 · 周次课表（$cachedLabel 的缓存）"
+                else -> "课表来源：教务系统 · 周次课表（登录已过期）"
+            }
+            error = stale
+            action = if (stale) "重新登录以刷新" to { context.logoutAndBackToLogin() } else null
         }
         state is WeekScheduleStore.State.Loading -> {
             text = "正在读取教学周课表…"
             error = false
             action = null
         }
-        state is WeekScheduleStore.State.Expired -> {
+        state is WeekScheduleStore.State.Expired -> if (cachedLabel != null) {
+            text = "登录已过期 · 日历用的是 $cachedLabel 的缓存（刷新需重新登录）"
+            error = true
+            action = "重新登录以刷新" to { context.logoutAndBackToLogin() }
+        } else {
             text = "登录已过期，日历只显示本周"
             error = true
             action = "重新登录" to { context.logoutAndBackToLogin() }

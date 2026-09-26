@@ -18,6 +18,10 @@ object UiSettings {
     private const val KEY_GLASS_MODE = "glass_mode"
     private const val KEY_NOTIFICATIONS = "notifications_enabled"
     private const val KEY_CALENDAR_GRID = "calendar_grid_layout"
+    private const val KEY_DEV_MODE = "dev_mode"
+    private const val KEY_AUTO_UPDATE = "auto_update_check"
+    private const val KEY_UPDATE_SOURCE = "update_source"
+    private const val KEY_LAST_UPDATE_CHECK = "last_update_check_at"
 
     private var prefs: SharedPreferences? = null
 
@@ -37,6 +41,38 @@ object UiSettings {
      */
     val calendarGridLayout = mutableStateOf(false)
 
+    /**
+     * **开发者模式**开关：打开后地图页多出一套"点位采集 / 标定 / 数据导出"工具。
+     *
+     * 默认关闭，而且刻意放在设置页（不是地图页上藏一个长按入口）：
+     * 它改的是**数据采集**行为，只有开发者自己知道在干什么时才该打开；
+     * 藏起来的结果是下一个用户偶然打开，然后对着采集按钮一脸茫然。
+     *
+     * 打开后地图页会多出：原地采点（站在那儿取 GPS）、图上采点、标定、点位面板，
+     * 数据自动写到系统根目录下的 `ManyCourse/`（见 `data/MapPointStore.kt`）。
+     */
+    val devMode = mutableStateOf(false)
+
+    /**
+     * **启动时自动检查更新**（默认开）。
+     *
+     * 自动检查只是"查一下有没有新版本"（几 KB 的 JSON），**不会自动下载**——
+     * 下载与安装必须用户点（既省流量，也不会在他不知情时装上一个新版本）。
+     * 间隔由 [UpdateStore.AUTO_CHECK_INTERVAL_MS] 控制（12 小时）。
+     */
+    val autoUpdateCheck = mutableStateOf(true)
+
+    /** 从哪个源查更新（默认两个都查，见 [UpdateSourcePreference]）*/
+    val updateSource = mutableStateOf(UpdateSourcePreference.Auto)
+
+    /**
+     * 上次检查更新的时刻（毫秒）；0 = 从没查过。
+     *
+     * **落盘**是刻意的：只放内存的话，用户一天开关十次 App 就会打十次接口
+     * （GitHub 未认证限流 60 次/小时/IP，两个人共用出口 IP 时很容易撞上）。
+     */
+    val lastUpdateCheckAt = mutableStateOf(0L)
+
     /** 幂等初始化，由 ManyCourseApp.onCreate 调用 */
     fun attach(context: Context) {
         if (prefs != null) return
@@ -45,6 +81,10 @@ object UiSettings {
         glassMode.value = GlassMode.fromKey(p.getString(KEY_GLASS_MODE, null))
         notificationsEnabled.value = p.getBoolean(KEY_NOTIFICATIONS, true)
         calendarGridLayout.value = p.getBoolean(KEY_CALENDAR_GRID, false)
+        devMode.value = p.getBoolean(KEY_DEV_MODE, false)
+        autoUpdateCheck.value = p.getBoolean(KEY_AUTO_UPDATE, true)
+        updateSource.value = UpdateSourcePreference.fromKey(p.getString(KEY_UPDATE_SOURCE, null))
+        lastUpdateCheckAt.value = p.getLong(KEY_LAST_UPDATE_CHECK, 0L)
     }
 
     /** 切换玻璃风格并持久化（无需重启 Activity） */
@@ -66,5 +106,32 @@ object UiSettings {
         if (calendarGridLayout.value == enabled) return
         calendarGridLayout.value = enabled
         prefs?.edit()?.putBoolean(KEY_CALENDAR_GRID, enabled)?.apply()
+    }
+
+    /** 开发者模式开关，持久化 */
+    fun setDevMode(enabled: Boolean) {
+        if (devMode.value == enabled) return
+        devMode.value = enabled
+        prefs?.edit()?.putBoolean(KEY_DEV_MODE, enabled)?.apply()
+    }
+
+    /** 自动检查更新开关，持久化 */
+    fun setAutoUpdateCheck(enabled: Boolean) {
+        if (autoUpdateCheck.value == enabled) return
+        autoUpdateCheck.value = enabled
+        prefs?.edit()?.putBoolean(KEY_AUTO_UPDATE, enabled)?.apply()
+    }
+
+    /** 更新源，持久化 */
+    fun setUpdateSource(source: UpdateSourcePreference) {
+        if (updateSource.value == source) return
+        updateSource.value = source
+        prefs?.edit()?.putString(KEY_UPDATE_SOURCE, source.name)?.apply()
+    }
+
+    /** 记下"刚查过更新"（用于自动检查的节流）*/
+    fun setLastUpdateCheckAt(millis: Long) {
+        lastUpdateCheckAt.value = millis
+        prefs?.edit()?.putLong(KEY_LAST_UPDATE_CHECK, millis)?.apply()
     }
 }

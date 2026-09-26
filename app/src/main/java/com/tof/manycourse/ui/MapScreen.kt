@@ -6,6 +6,7 @@ import android.net.Uri
 import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -23,6 +24,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Icon
@@ -30,6 +32,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableFloatStateOf
@@ -42,29 +45,50 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.drawText
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.tof.manycourse.data.CampusPick
+import com.tof.manycourse.data.CourseEntry
+import com.tof.manycourse.data.CoursePlacement
+import com.tof.manycourse.data.CourseRepository
 import com.tof.manycourse.data.DeviceLocation
+import com.tof.manycourse.data.MapAnchor
+import com.tof.manycourse.data.MapPoint
+import com.tof.manycourse.data.MapPointStore
+import com.tof.manycourse.data.SchoolCampus
 import com.tof.manycourse.data.SchoolMap
+import com.tof.manycourse.data.UiSettings
+import com.tof.manycourse.data.WifiFingerprintStore
+import com.tof.manycourse.data.WifiFix
+import com.tof.manycourse.data.coursesOfDate
+import com.tof.manycourse.data.imagePlacementOf
+import com.tof.manycourse.data.isInsideImage
+import com.tof.manycourse.data.locateByWifi
 import com.tof.manycourse.data.pickCampus
+import com.tof.manycourse.data.placeCoursesOnMap
+import com.tof.manycourse.data.projectToImage
+import com.tof.manycourse.data.scanWifiOnce
 import com.tof.manycourse.gr_api.SchoolRegistry
 import com.tof.manycourse.ui.components.CampusChip
 import com.tof.manycourse.ui.components.GlassCard
 import com.tof.manycourse.ui.theme.LocalGlassTokens
 import kotlinx.coroutines.launch
+import java.time.LocalDate
 import kotlin.math.max
-import kotlin.math.min
 import kotlin.math.roundToInt
 
 /** 缩放下限：1 = 整张图刚好完整显示（ContentScale.Fit），不允许再缩小 */
@@ -195,6 +219,146 @@ fun MapScreen(
 
     val pick = pickCampus(campuses = campuses, manualCampusId = manualCampusId, location = location)
     val campus = pick.campus
+    val tokens = LocalGlassTokens.current
+
+    // ── 开发者模式 ────────────────────────────────────────────────────────
+    val devMode by UiSettings.devMode
+    // 换校区时清掉"正在等你点图"这类临时状态：否则切到新图之后，
+    // 上一次没点完的那一下会落到新校区上，采出一条莫名其妙的数据
+    LaunchedEffect(campus?.id) { MapDevSession.reset() }
+
+    // ── 标定 & 标记 ───────────────────────────────────────────────────────
+    // 标定每次现算（几个锚点的最小二乘，微秒级）：刚采完一个锚点，图上的标记立刻跟着动
+    val calibration = MapPointStore.calibrationOf(campus?.id)
+    val todayEntries = coursesOfDate(LocalDate.now())
+    val todayPlacements = placeCoursesOnMap(
+        entries = todayEntries.orEmpty(),
+        points = MapPointStore.allPoints,
+        calibration = calibration,
+        campusId = campus?.id,
+    )
+    val onMapCourses = todayPlacements.filterIsInstance<CoursePlacement.OnMap>()
+
+    val markers = buildList {
+        // 今日课程：图上用**序号**（图上写不下课程名），序号与下面那份清单一一对应
+        onMapCourses.forEachIndexed { index, placement ->
+            add(
+                MapMarker(
+                    imageX = placement.imageX,
+                    imageY = placement.imageY,
+                    label = "${index + 1}",
+                    kind = MapMarkerKind.Course,
+                    color = CourseRepository.colorOfName(placement.entry.name),
+                )
+            )
+        }
+        // 开发者模式：把采过的点位也画出来 —— 采完立刻能看出"标到哪儿了、偏没偏"
+        if (devMode) {
+            MapPointStore.pointsOf(campus?.id).forEach { point ->
+                val placement = imagePlacementOf(point, calibration) ?: return@forEach
+                if (isInsideImage(placement.first, placement.second)) {
+                    add(MapMarker(placement.first, placement.second, "", MapMarkerKind.Point, tokens.accent))
+                }
+            }
+        }
+    }
+
+    /**
+     * 「我在这儿」有两个来源，**GPS 优先**：
+     *  1. GPS（室外）：经标定投影到图上 —— 米级；
+     *  2. **Wi-Fi 指纹**（室内，GPS 拿不到或落在图外）：走几圈采下来的指纹库反查 —— 区域级。
+     *
+     * 两个都没有就画不出来，那时页面会如实说清缺的是哪一样（见 [TodayCourseMapLegend]）。
+     */
+    val gpsMarker = location
+        ?.let { fix -> projectToImage(fix.latitude, fix.longitude, calibration) }
+        ?.takeIf { isInsideImage(it.first, it.second) }
+        ?.let { (x, y) -> MapMarker(x, y, "", MapMarkerKind.MyLocation, tokens.accent) }
+
+    var wifiFix by remember(campus?.id) { mutableStateOf<WifiFix?>(null) }
+    var wifiFixUsedCache by remember(campus?.id) { mutableStateOf(false) }
+
+    val wifiMarker = if (gpsMarker == null) {
+        wifiFix
+            ?.takeIf { isInsideImage(it.imageX, it.imageY) }
+            ?.let { MapMarker(it.imageX, it.imageY, "", MapMarkerKind.MyLocation, tokens.accent) }
+    } else {
+        null
+    }
+
+    val myMarker = gpsMarker ?: wifiMarker
+
+    // 室内没有 GPS 时才去扫一次 Wi-Fi（这个校区**已经有指纹**才有意义）——
+    // 否则白扫一次，还占掉一次被系统节流的扫描机会
+    LaunchedEffect(campus?.id, visible, location, calibration) {
+        val id = campus?.id ?: return@LaunchedEffect
+        if (!visible || gpsMarker != null) return@LaunchedEffect
+        if (WifiFingerprintStore.countFor(id) == 0) return@LaunchedEffect
+        val scan = scanWifiOnce(context) ?: return@LaunchedEffect
+        wifiFix = locateByWifi(id, scan.aps)
+        wifiFixUsedCache = scan.fromCache
+    }
+
+    val myLocationNote = when {
+        gpsMarker != null -> "蓝点 = 你现在的位置（GPS）"
+        wifiMarker != null ->
+            "蓝点 = Wi-Fi 估算的区域位置" +
+                (if (wifiFixUsedCache) "（用的是系统缓存的扫描；" else "（") +
+                "参考 ${wifiFix?.matched ?: 0} 条指纹 · 区域级，不是教室级）"
+        location != null && calibration == null -> "已定位，但这个校区还没标定过，所以画不出「我在这儿」"
+        location != null -> "已定位，但你的位置不在这张图的范围内"
+        else -> null
+    }
+
+    /**
+     * 开发者模式在"等你点图"时，把点到的屏幕位置换算成图上归一化坐标并落库。
+     *
+     * 采完立刻清掉 [MapDevSession.pendingPick]（一次点击只采一个点）——
+     * 留着的话，用户随手再点一下图就会多出一个同名点位，而且没有任何提示。
+     */
+    val onPickAt: (Float, Float) -> Unit = { imageX, imageY ->
+        val request = MapDevSession.pendingPick.value
+        if (request != null && campus != null) {
+            when (request) {
+                is MapPickRequest.Point -> {
+                    MapPointStore.addPoint(
+                        context,
+                        MapPoint(
+                            id = "${campus.id}-${System.currentTimeMillis()}",
+                            campusId = campus.id,
+                            name = request.name,
+                            imageX = imageX,
+                            imageY = imageY,
+                            createdAt = System.currentTimeMillis(),
+                        ),
+                    )
+                    MapDevSession.message.value = "已采集「${request.name}」（图上位置）"
+                }
+
+                is MapPickRequest.Anchor -> {
+                    MapPointStore.addAnchor(
+                        context,
+                        MapAnchor(
+                            campusId = campus.id,
+                            name = request.name,
+                            imageX = imageX,
+                            imageY = imageY,
+                            latitude = request.latitude,
+                            longitude = request.longitude,
+                        ),
+                    )
+                    val total = MapPointStore.anchorsOf(campus.id).size
+                    MapDevSession.message.value =
+                        if (total < 2) {
+                            "已加锚点「${request.name}」· 还差 ${2 - total} 个才能标定"
+                        } else {
+                            "已加锚点「${request.name}」· 共 $total 个，标定已生效"
+                        }
+                }
+            }
+            MapDevSession.pendingPick.value = null
+        }
+    }
 
     Column(
         modifier
@@ -281,6 +445,12 @@ fun MapScreen(
             },
         )
 
+        // ═══ 开发者模式：采集工具栏（采点 / 标定都从这里发起）═══
+        if (devMode) {
+            Spacer(Modifier.height(8.dp))
+            DevModeHeader(schoolId = schoolId, campus = campus)
+        }
+
         Spacer(Modifier.height(8.dp))
 
         // ═══ 地图本体：换校区时重建（缩放/位移复位），否则新图会继承上一张的缩放 ═══
@@ -290,19 +460,44 @@ fun MapScreen(
                 .fillMaxWidth()
                 .weight(1f),
         ) {
-            if (campus == null) {
-                NoMapPlaceholder(school?.name)
-            } else {
-                key(campus.id) {
+            when {
+                // 开发者模式的两个"占满整块"的界面：走几圈采集 / 点位面板
+                devMode && MapDevSession.walkMode.value ->
+                    WalkPanel(schoolId = schoolId, campus = campus)
+
+                devMode && MapDevSession.panelExpanded.value ->
+                    DevModePanel(schoolId = schoolId, campus = campus)
+
+                campus == null -> NoMapPlaceholder(school?.name)
+
+                else -> key(campus.id) {
                     ZoomableMap(
                         resId = campus.drawableRes,
                         description = "${school?.name.orEmpty()}${campus.name}地图",
+                        markers = markers,
+                        myLocation = myMarker,
+                        // 只有"正在等你点图"时才让点击去采点，平时点一下什么也不做
+                        // （双击复位仍随时可用，见 ZoomableMap）
+                        onPickAt = if (MapDevSession.pendingPick.value != null) onPickAt else null,
                     )
                 }
             }
         }
 
-        Spacer(Modifier.height(12.dp))
+        Spacer(Modifier.height(8.dp))
+
+        // ═══ 今日课程：图上那几个序号分别是什么、缺的又是哪一类 ═══
+        TodayCourseMapLegend(
+            todayEntries = todayEntries,
+            placements = todayPlacements,
+            campuses = campuses,
+            onSwitchCampus = { manualCampusId = it },
+            hasCalibration = calibration != null,
+            devMode = devMode,
+            myLocationNote = myLocationNote,
+        )
+
+        Spacer(Modifier.height(10.dp))
 
         Text(
             text = if (school == null) {
@@ -492,6 +687,24 @@ private fun NoMapPlaceholder(schoolName: String?) {
 }
 
 /**
+ * 图上要画的一个标记。
+ *
+ * [imageX] / [imageY] 是**图上归一化坐标**（0~1，左上角原点），不是像素 ——
+ * 同一份标记在任何屏幕尺寸、任何缩放倍数下都能画对。
+ */
+internal data class MapMarker(
+    val imageX: Float,
+    val imageY: Float,
+    /** 圆点里的字（课程用序号；其它标记留空）*/
+    val label: String,
+    val kind: MapMarkerKind,
+    val color: Color,
+)
+
+/** 标记的三种画法：课程（带序号的实心圆）/ 采集点位（小点）/ 我在这儿（蓝点 + 光圈）*/
+internal enum class MapMarkerKind { Course, Point, MyLocation }
+
+/**
  * 可缩放拖动的图片：`graphicsLayer` 做缩放位移，`transformable` 收手势。
  *
  * 位移做了**边界收拢**：缩放到 N 倍后，最多只能拖到"图片边缘贴住容器边缘"，
@@ -500,9 +713,25 @@ private fun NoMapPlaceholder(schoolName: String?) {
  *
  * 调用方用 `key(campus.id)` 包着它：换校区时整块重建，缩放与位移回到初始 —— 否则
  * 上一张图放大到 4 倍，切到下一张还是 4 倍且位置偏移，看着像新图加载坏了。
+ *
+ * ## 标记与"图上点选"都建立在同一套换算上
+ *
+ * 标记的位置和"用户点在图上的哪一点"是**同一个换算的正反两面**，
+ * 都收在 [MapViewport] 里（纯数据 + 纯函数，单测钉住"缩放绕**容器中心**"这个关键点）。
+ * 这里只负责：把视口交给 [MapViewport] → 拿它算标记位置 / 反算点选坐标。
+ *
+ * @param onPickAt 不为 null 时表示"正在等用户在图上点一下"（开发者模式采点/标定），
+ *   点到的位置会以**图上归一化坐标**回调出去；为 null 时单击没有任何副作用
+ *   （双击复位始终可用）
  */
 @Composable
-private fun ZoomableMap(resId: Int, description: String) {
+private fun ZoomableMap(
+    resId: Int,
+    description: String,
+    markers: List<MapMarker>,
+    myLocation: MapMarker?,
+    onPickAt: ((Float, Float) -> Unit)?,
+) {
     val painter = painterResource(resId)
     val imageWidth = painter.intrinsicSize.width
     val imageHeight = painter.intrinsicSize.height
@@ -511,24 +740,31 @@ private fun ZoomableMap(resId: Int, description: String) {
     var scale by remember { mutableFloatStateOf(MIN_SCALE) }
     var offset by remember { mutableStateOf(Offset.Zero) }
 
-    // 容器内按 Fit 缩放后的实际显示尺寸（px）
-    val fittedWidth = if (imageWidth > 0f && imageHeight > 0f && container.width > 0) {
-        val ratio = min(container.width / imageWidth, container.height / imageHeight)
-        imageWidth * ratio
-    } else {
-        0f
+    /**
+     * ★ 用 `derivedStateOf` 而不是普通 `val`：下面 `pointerInput` 里的那个 lambda
+     * **会活很久**（只在点选模式开关时重建），闭包捕获一个普通 `val` 拿到的是
+     * "创建那一刻"的视口 —— 于是缩放/拖动之后点图采点会整体偏移，而且不缩放时看着还是对的。
+     * 读 State 的当前值才是对的。
+     */
+    val viewportState = remember {
+        derivedStateOf {
+            MapViewport(
+                containerWidth = container.width.toFloat(),
+                containerHeight = container.height.toFloat(),
+                imageWidth = imageWidth,
+                imageHeight = imageHeight,
+                scale = scale,
+                offsetX = offset.x,
+                offsetY = offset.y,
+            )
+        }
     }
-    val fittedHeight = if (imageWidth > 0f && imageHeight > 0f && container.width > 0) {
-        val ratio = min(container.width / imageWidth, container.height / imageHeight)
-        imageHeight * ratio
-    } else {
-        0f
-    }
+    val viewport = viewportState.value
 
     fun clampOffset(candidate: Offset, currentScale: Float): Offset {
         if (currentScale <= MIN_SCALE) return Offset.Zero
-        val maxX = max(0f, (fittedWidth * currentScale - container.width) / 2f)
-        val maxY = max(0f, (fittedHeight * currentScale - container.height) / 2f)
+        val maxX = max(0f, (viewport.fittedWidth * currentScale - container.width) / 2f)
+        val maxY = max(0f, (viewport.fittedHeight * currentScale - container.height) / 2f)
         return Offset(
             x = candidate.x.coerceIn(-maxX, maxX),
             y = candidate.y.coerceIn(-maxY, maxY),
@@ -548,13 +784,27 @@ private fun ZoomableMap(resId: Int, description: String) {
         offset = Offset.Zero
     }
 
+    val pickMode = onPickAt != null
+
     Box(
         Modifier
             .fillMaxSize()
             .clipToBounds()
             .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.5f))
             .onSizeChanged { container = it }
-            .pointerInput(Unit) { detectTapGestures(onDoubleTap = { reset() }) }
+            .pointerInput(pickMode) {
+                detectTapGestures(
+                    onTap = { position ->
+                        // 只有"正在等点图"时才响应单击；平时点一下什么也不做，
+                        // 不然用户随手一碰就多出一条数据
+                        if (pickMode) {
+                            viewportState.value.toImage(position.x, position.y)
+                                ?.let { (imageX, imageY) -> onPickAt?.invoke(imageX, imageY) }
+                        }
+                    },
+                    onDoubleTap = { reset() },
+                )
+            }
             .transformable(transformState),
         contentAlignment = Alignment.Center,
     ) {
@@ -571,6 +821,10 @@ private fun ZoomableMap(resId: Int, description: String) {
                     translationY = offset.y
                 },
         )
+
+        // 标记画在图片**之上**，但**不放进 graphicsLayer**：位置由 MapViewport 现算，
+        // 所以放大时标记不会跟着一起放大（6 倍下圆点还是圆点，否则会糊成一个色块遮住楼名）
+        MarkerOverlay(markers = markers, myLocation = myLocation, viewport = viewport)
 
         // 放大后给一个复位入口：双击虽然也行，但没人知道能双击
         if (scale > MIN_SCALE + 0.01f) {
@@ -591,4 +845,197 @@ private fun ZoomableMap(resId: Int, description: String) {
             }
         }
     }
+}
+
+/**
+ * 把标记画到图上（一个 Canvas 画完，不用一堆 Composable）。
+ *
+ * 为什么用 Canvas 而不是给每个标记摆一个 Composable：位置要按 [MapViewport] 现算，
+ * 用 Composable 就得自己算 dp/px 并让每个标记"中心对齐到某个点"（还得反过来补偿自身尺寸），
+ * 而 Canvas 里 `drawCircle(center = ...)` 天生就是中心对齐。
+ *
+ * 画在 Canvas 上的东西**不参与命中测试** —— 所以开发者模式"点图采点"不会误点标记，
+ * 点哪儿就是哪儿（这正是采点需要的）。
+ */
+@Composable
+private fun MarkerOverlay(
+    markers: List<MapMarker>,
+    myLocation: MapMarker?,
+    viewport: MapViewport,
+) {
+    val measurer = rememberTextMeasurer()
+    Canvas(Modifier.fillMaxSize()) {
+        markers.forEach { marker ->
+            if (marker.kind == MapMarkerKind.MyLocation) return@forEach // 单独画，要压在最上层
+            val (x, y) = viewport.toScreen(marker.imageX, marker.imageY) ?: return@forEach
+            val center = Offset(x, y)
+            when (marker.kind) {
+                MapMarkerKind.Course -> {
+                    // 白圈垫底：课程色可能与地图底色接近，不垫就"看不见有个标记"
+                    drawCircle(Color.White.copy(alpha = 0.92f), radius = 13.dp.toPx(), center = center)
+                    drawCircle(marker.color, radius = 11.dp.toPx(), center = center)
+                    if (marker.label.isNotBlank()) {
+                        val layout = measurer.measure(
+                            text = marker.label,
+                            style = TextStyle(
+                                color = Color.White,
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.Bold,
+                            ),
+                        )
+                        drawText(
+                            textLayoutResult = layout,
+                            topLeft = Offset(
+                                center.x - layout.size.width / 2f,
+                                center.y - layout.size.height / 2f,
+                            ),
+                        )
+                    }
+                }
+
+                MapMarkerKind.Point -> {
+                    drawCircle(Color.White, radius = 6.dp.toPx(), center = center)
+                    drawCircle(marker.color, radius = 4.dp.toPx(), center = center)
+                }
+
+                MapMarkerKind.MyLocation -> Unit
+            }
+        }
+
+        // 「我在这儿」画最后：它是"当前这一刻"的信息，不该被任何标记盖住
+        myLocation?.let { marker ->
+            val (x, y) = viewport.toScreen(marker.imageX, marker.imageY) ?: return@let
+            val center = Offset(x, y)
+            drawCircle(marker.color.copy(alpha = 0.22f), radius = 20.dp.toPx(), center = center)
+            drawCircle(Color.White, radius = 9.dp.toPx(), center = center)
+            drawCircle(marker.color, radius = 6.5.dp.toPx(), center = center)
+        }
+    }
+}
+
+/**
+ * 地图下方那一行/几行：**"今日课程"在地图上的解释**。
+ *
+ * 它要回答三件事，缺了任何一件用户都会觉得"这功能没用"：
+ *  1. 图上那些序号是什么课（[CoursePlacement.OnMap] → 逐条列出）；
+ *  2. **没画出来的那些为什么没画** —— 分成"教室还没采点位"（要出门）/ "有点位但没标定"
+ *     （在图上点两下就行）/ "点位在别的校区"（切过去就能看）三类，逐类给出下一步动作；
+ *  3. 蓝点（我在这儿）画出来了没有；没画出来是缺定位还是缺标定。
+ */
+@Composable
+private fun TodayCourseMapLegend(
+    todayEntries: List<CourseEntry>?,
+    placements: List<CoursePlacement>,
+    campuses: List<SchoolCampus>,
+    onSwitchCampus: (String) -> Unit,
+    hasCalibration: Boolean,
+    devMode: Boolean,
+    /** 「我在这儿」那句话（含"为什么没画出来"）；null = 什么都不用说 */
+    myLocationNote: String?,
+) {
+    val tokens = LocalGlassTokens.current
+    val onMap = placements.filterIsInstance<CoursePlacement.OnMap>()
+    val notCollected = placements.filterIsInstance<CoursePlacement.NotCollected>()
+    val offImage = placements.filterIsInstance<CoursePlacement.OffImage>()
+    val otherCampus = placements.filterIsInstance<CoursePlacement.OtherCampus>()
+
+    Column(Modifier.fillMaxWidth()) {
+        Text(
+            // 用 if/else 而不是 when：`coursesOfDate` 的 null（没有课表数据）与空表（今天真的没课）
+            // 是两件事，两句话不能混；写过 when 分支条件里依赖前一个分支的非空推断，改起来容易踩空
+            text = if (todayEntries == null) {
+                "今天没有课表数据（去「课表」页同步一次）"
+            } else if (todayEntries.isEmpty()) {
+                "今天没课"
+            } else {
+                "今日 ${todayEntries.size} 门课 · 图上标出 ${onMap.size} 门"
+            },
+            fontSize = 12.sp,
+            lineHeight = 16.sp,
+            color = MaterialTheme.colorScheme.onSurface,
+        )
+
+        // 蓝点状态：GPS 不行时会退到 Wi-Fi 指纹，两样都不行就说清缺的是哪一样
+        myLocationNote?.let { HintLine(text = it) }
+
+        // ① 图上那几门，序号与圆点一一对应
+        onMap.take(4).forEachIndexed { index, placement ->
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .padding(top = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = "${index + 1}",
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = CourseRepository.colorOfName(placement.entry.name),
+                )
+                Spacer(Modifier.width(6.dp))
+                Text(
+                    text = "${placement.entry.name} · ${placement.entry.periodLabel} · ${placement.entry.room}",
+                    fontSize = 11.sp,
+                    lineHeight = 15.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+        }
+        if (onMap.size > 4) {
+            HintLine(text = "…图上还有 ${onMap.size - 4} 门（完整课表见「课表」页）")
+        }
+
+        // ② 没画出来的三类，各给各的下一步
+        if (notCollected.isNotEmpty()) {
+            HintLine(
+                text = "${notCollected.size} 门教室还没采点位：" +
+                    notCollected.take(3).joinToString("、") { it.entry.room } +
+                    if (notCollected.size > 3) " 等" else "" +
+                        if (devMode) "　→ 到那儿用「原地采点」" else "　→ 设置里打开开发者模式即可采集",
+            )
+        }
+        if (offImage.isNotEmpty()) {
+            HintLine(
+                text = "${offImage.size} 门有点位、但落不到图上" +
+                    (if (!hasCalibration) "（这个校区还没标定）" else "（点位落在图片范围之外）") +
+                    if (devMode) "　→ 用「标定」采两个锚点" else "",
+            )
+        }
+        if (otherCampus.isNotEmpty()) {
+            val campusName = campuses.firstOrNull { it.id == otherCampus.first().campusId }?.name
+                ?: otherCampus.first().campusId
+            Row(Modifier.fillMaxWidth().padding(top = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    text = "${otherCampus.size} 门课在「$campusName」",
+                    fontSize = 11.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.weight(1f),
+                )
+                Text(
+                    text = "切过去看",
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = tokens.accent,
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(8.dp))
+                        .clickable { onSwitchCampus(otherCampus.first().campusId) }
+                        .padding(horizontal = 8.dp, vertical = 4.dp),
+                )
+            }
+        }
+    }
+}
+
+/** 图例里的次要一行（11sp、次要色）*/
+@Composable
+private fun HintLine(text: String) {
+    Text(
+        text = text,
+        fontSize = 11.sp,
+        lineHeight = 15.sp,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier.padding(top = 4.dp),
+    )
 }

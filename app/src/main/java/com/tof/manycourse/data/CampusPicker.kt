@@ -1,7 +1,17 @@
 package com.tof.manycourse.data
 
-/** 一次定位结果 —— 只要经纬度：本应用不显示坐标、不做导航，坐标唯一的用途是"挑校区" */
-data class DeviceLocation(val latitude: Double, val longitude: Double)
+/**
+ * 一次定位结果 —— 经纬度是"挑校区"和"采点位"都要的；[accuracyMeters] 只给采点用。
+ *
+ * @param accuracyMeters 系统给的定位精度（米，68% 置信半径）；**拿不到时为 null**。
+ *   挑校区不看它（几公里的校区尺度上，几十米的误差无所谓），但**采点位必须看**：
+ *   精度 500 m 的点位标到图上会偏出一整个街区，而用户看不出来（见 `MapPointAccuracyHint`）。
+ */
+data class DeviceLocation(
+    val latitude: Double,
+    val longitude: Double,
+    val accuracyMeters: Float? = null,
+)
 
 /**
  * 地图页最终**显示哪个校区**（[pickCampus] 的结论）。

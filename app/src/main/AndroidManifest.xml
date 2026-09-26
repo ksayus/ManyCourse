@@ -32,6 +32,55 @@
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
 
+    <!--
+      **开发者模式**要把实地采集的点位写到"系统根目录下的 ManyCourse 目录"
+      （`/sdcard/ManyCourse/`，见 `data/MapPointStore.kt`）。
+
+      Android 11 起，应用**不能**再往 `/sdcard/自己起的目录/` 直接写文件了：要么走 MediaStore
+      （不适合这种结构化文本），要么申请这个特殊权限。它**不是**运行时弹窗能给的 ——
+      必须用户自己在系统设置里打开"所有文件访问"，所以：
+        - 没授权时**不影响任何功能**：数据自动落到应用专属目录
+          `Android/data/com.tof.manycourse/files/ManyCourse/`，开发者模式面板会**如实显示真实路径**；
+        - 面板上有「去授权」按钮，跳到 `ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION`。
+
+      注意：这条权限在 Google Play 上属于需要额外申报的高敏感权限。本应用是自用/侧载分发
+      （GitHub Releases），所以可以接受；**要上架 Play 的话这一条得先去掉**，
+      那时开发者模式只能写到应用专属目录。
+    -->
+    <uses-permission
+        android:name="android.permission.MANAGE_EXTERNAL_STORAGE"
+        tools:ignore="ScopedStorage" />
+
+    <!--
+      **轨迹采集**（走几圈采点位 + Wi-Fi 指纹，见 `data/WalkRecorder.kt`）要的权限。
+
+      每条权限为什么要：
+        - ACCESS_WIFI_STATE / CHANGE_WIFI_STATE：读扫描结果 / 主动发起扫描（普通权限，不弹窗）；
+        - NEARBY_WIFI_DEVICES：Android 13 起用 Wi-Fi 相关 API 必须声明；**不写 neverForLocation**，
+          因为我们要的正是 BSSID（它属于位置信息）；
+        - 定位（上面两条）：扫描结果里的 BSSID 在 Android 10 起算位置信息，没定位权限拿不到；
+        - ACTIVITY_RECOGNITION：计步传感器（TYPE_STEP_COUNTER）在 Android 10 起归它管，
+          **运行时申请**，用户不给就退化成"只靠 GPS 锚定"。
+
+      全部**可选**：不给权限只是采集能力变弱（甚至完全采不了），不做任何事也能正常看课表。
+    -->
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+    <uses-permission android:name="android.permission.CHANGE_WIFI_STATE" />
+    <uses-permission android:name="android.permission.NEARBY_WIFI_DEVICES" />
+    <uses-permission android:name="android.permission.ACTIVITY_RECOGNITION" />
+
+    <!--
+      **自动更新**：下载完 APK 要交给系统安装器。
+
+      Android 8.0 起，应用要装别的应用必须先有这个权限，而且用户还得在系统设置里**逐应用**
+      打开「安装未知应用」（`Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES`）——
+      普通权限弹窗给不了它。所以流程是：下载 → 没授权就如实说明并给一个「去授权」入口 →
+      授权后再拉起安装器（见 `data/UpdateDownloader.kt`）。
+
+      这条权限也**可选**：不给的话其余功能一切照旧，只是更新得自己下载安装。
+    -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+
     <application
         android:name=".ManyCourseApp"
         android:allowBackup="true"
@@ -63,6 +112,27 @@
             android:screenOrientation="portrait"
             android:windowSoftInputMode="adjustResize"
             tools:ignore="LockedOrientationActivity" />
+
+        <!--
+          **自动更新要用 FileProvider 把 APK 交给系统安装器**。
+
+          为什么不直接传 `file://` 路径：Android 7.0 起对应用外暴露 `file://` 会抛
+          `FileUriExposedException`（那是为了堵"用文件路径绕开权限"的洞）。`FileProvider`
+          生成一个 `content://` 地址并**只授权给安装器那一个接收方**
+          （`FLAG_GRANT_READ_URI_PERMISSION`），暴露面最小。
+
+          `exported="false"` + 只暴露 `updates/` 一个子目录（见 `res/xml/file_paths.xml`）：
+          别人拿不到我们任何其它文件。
+        -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
     </application>
 
 </manifest>
