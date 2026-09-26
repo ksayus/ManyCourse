@@ -37,21 +37,21 @@ ManyCourse（中文名「课多多」）不做"又一个手输课表 App"。它�
   - [1.3 技术栈](#13-技术栈)
 - [2. 快速开始](#2-快速开始)
 - [3. 项目结构](#3-项目结构)
-- [4. 校园 API 添加指南（加一所学校）](#4-校园-api-添加指南（加一所学校）)
+- [4. 校园 API 添加指南（加一所学校）](#4-校园-api-添加指南加一所学校)
   - [4.1 先判断属于哪一种学校](#41-先判断属于哪一种学校)
-  - [4.2 抓包：拿到三个值](#42-抓包：拿到三个值)
-  - [4.3 三步接入（表单登录型）](#43-三步接入（表单登录型）)
+  - [4.2 抓包：拿到三个值](#42-抓包拿到三个值)
+  - [4.3 三步接入（表单登录型）](#43-三步接入表单登录型)
   - [4.4 多步登录 / JSON 判定的学校](#44-多步登录--json-判定的学校)
   - [4.5 接口契约速查](#45-接口契约速查)
-  - [4.6 密码加密：四种常见形态](#46-密码加密：四种常见形态)
+  - [4.6 密码加密：四种常见形态](#46-密码加密四种常见形态)
   - [4.7 验证码](#47-验证码)
   - [4.8 拉课表与拉学生信息](#48-拉课表与拉学生信息)
-  - [4.9 节次表（作息）是学校的事实](#49-节次表（作息）是学校的事实)
-  - [4.10 「维持登录」：会话持久化](#410-「维持登录」：会话持久化)
+  - [4.9 节次表（作息）是学校的事实](#49-节次表作息是学校的事实)
+  - [4.10 「维持登录」：会话持久化](#410-维持登录会话持久化)
   - [4.11 提交前自查清单](#411-提交前自查清单)
-- [5. 地图添加指南（加校区地图）](#5-地图添加指南（加校区地图）)
-  - [5.1 图片放哪儿：必须是合法资源目录](#51-图片放哪儿：必须是合法资源目录)
-  - [5.2 登记校区（含坐标）](#52-登记校区（含坐标）)
+- [5. 地图添加指南（加校区地图）](#5-地图添加指南加校区地图)
+  - [5.1 图片放哪儿：必须是合法资源目录](#51-图片放哪儿必须是合法资源目录)
+  - [5.2 登记校区（含坐标）](#52-登记校区含坐标)
   - [5.3 坐标从哪来](#53-坐标从哪来)
   - [5.4 定位与"显示哪张图"](#54-定位与显示哪张图)
   - [5.5 地图页交互](#55-地图页交互)
@@ -63,10 +63,10 @@ ManyCourse（中文名「课多多」）不做"又一个手输课表 App"。它�
   - [6.4 签名与发布包](#64-签名与发布包)
   - [6.5 常见构建问题](#65-常见构建问题)
 - [7. CI/CD 自动构建](#7-cicd-自动构建)
-  - [7.1 三个 Job 分别做什么](#71-三个-job-分别做什么)
+  - [7.1 两个 Job 分别做什么](#71-两个-job-分别做什么)
   - [7.2 配置签名 Secrets](#72-配置签名-secrets)
   - [7.3 打一个正式版](#73-打一个正式版)
-  - [7.4 下载页（index.html）](#74-下载页（indexhtml）)
+  - [7.4 下载页（index.html）](#74-下载页indexhtml)
   - [7.5 常见 CI 失败](#75-常见-ci-失败)
 - [8. 延伸文档](#8-延伸文档)
 - [9. 免责声明](#9-免责声明)
@@ -99,8 +99,8 @@ ManyCourse（中文名「课多多」）不做"又一个手输课表 App"。它�
 | 南京航空航天大学金城学院 | `nhjcxy` | ASP.NET MVC + EaWeb 两段式 | 两次登录（新前端 + 老后台） | **国密 SM2**（自己实现，不引 BouncyCastle） | ✅ 按班级查表 |
 | 广东工业大学 | `gdut` | 金智统一身份认证 + jxfw | authserver 单点登录 | **AES**（`randomString(64) + 密码`） | ✅ `xsAllKbList` |
 
-> **想让你的学校也进来？** 照 [第 4 章](#4-校园-api-添加指南（加一所学校）) 走一遍，通常只要一个新文件 + 一行注册。
-> 想贡献地图只要一张图 + 一行登记，见 [第 5 章](#5-地图添加指南（加校区地图）)。
+> **想让你的学校也进来？** 照 [第 4 章](#4-校园-api-添加指南加一所学校) 走一遍，通常只要一个新文件 + 一行注册。
+> 想贡献地图只要一张图 + 一行登记，见 [第 5 章](#5-地图添加指南加校区地图)。
 
 ### 1.3 技术栈
 
@@ -637,7 +637,7 @@ manycourse.keyPassword=…
 | `Unsupported class file major version` / AGP 报 JDK 版本 | Gradle 用的 JDK 太老。设 `JAVA_HOME` 指向 JDK 17+（Android Studio 里改 `Gradle JDK`） |
 | Compose 编译期卡住 / OOM | 调 `gradle.properties` 的 `org.gradle.jvmargs=-Xmx2048m`（机器内存小就降到 1536m） |
 | 登录点不动 / 报 `CLEARTEXT` | `targetSdk ≥ 28` 默认禁明文 http；正常路径已被 `UpgradeCleartextInterceptor` 升级成 https，若对方**只支持 http**，见 `docs/教务API接入与调用指南.md` §7 |
-| 地图页说"这学校没有地图" | 学校 id 或资源名拼错（不报错，只是查不到）→ 见 [5.2](#52-登记校区（含坐标）) |
+| 地图页说"这学校没有地图" | 学校 id 或资源名拼错（不报错，只是查不到）→ 见 [5.2](#52-登记校区含坐标) |
 
 ---
 
@@ -645,13 +645,15 @@ manycourse.keyPassword=…
 
 工作流：**[`.github/workflows/android-ci.yml`](.github/workflows/android-ci.yml)** —— 内置了 `gradlew` 与完整签名流程，不需要任何额外插件。
 
-### 7.1 三个 Job 分别做什么
+### 7.1 两个 Job 分别做什么
 
 | Job | 触发条件 | 做什么 | 产物 |
 |---|---|---|---|
 | **`build`**（CI） | push 到 `master`/`main`、任何 PR、手动 | 跑全部 JVM 单测 → 出 `app-debug.apk` + **未签名** `app-release-unsigned.apk` | workflow artifact（保留 14 天） |
 | **`release`**（CD） | 推 `v*` 标签（如 `v1.0.0`）、手动（可指定 tag） | 用 Secrets 签名出正式 APK → 自动创建 **GitHub Release** 并附上 APK | Release 附件 |
-| **`pages`**（CD） | push 到默认分支、手动 | 把 `index.html` 等静态文件部署到 **GitHub Pages** | 在线下载页 |
+
+> 没有部署 Pages 的 job：下载页是纯静态的，由 Pages 的「Deploy from a branch」直接发布，
+> 不需要 CI 参与（详见 [7.4](#74-下载页indexhtml)）。
 
 细节上做到了这几点：
 
@@ -664,7 +666,8 @@ manycourse.keyPassword=…
 - **版本号**：Release 的 `versionName` 取自 git tag（`v1.0.0.4` → `1.0.0.4`），`versionCode` 用 run number ——
   这样每个 tag 产出的包版本号都不一样，不会出现"装不上、提示已安装更高版本"
   （本地默认值是四位版本号 `1.0.0.3`，CI 只在 `-PversionName=` 传参时覆盖它）；
-- **权限最小化**：只申请 `contents: write`（发 Release）、`pages: write` / `id-token: write`（部署 Pages）。
+- **权限最小化**：只申请 `contents: write`（发 Release），其余按默认只读 ——
+  不再需要 `pages: write` / `id-token: write`（没有部署 Pages 的 job 了）。
 
 ### 7.2 配置签名 Secrets
 
@@ -688,8 +691,8 @@ git push origin v1.0.0.4
 ```
 
 推送标签后 CI 自动：跑测试 → 签名构建 → 建 Release → 上传 `ManyCourse-1.0.0.4.apk`。
-下载页（Pages）会**自动**把最新 Release 里的 APK 找出来挂到下载按钮上，
-无需手工改版本号或链接。
+下载页会**自动**把最新 Release 里的 APK 找出来挂到下载按钮上 —— 那是页面在浏览器里
+运行时调 GitHub API 拿的，跟 CI 无关，无需手工改版本号或链接。
 
 > 只想构建不发布：Actions 页面选 **Android CI/CD** → **Run workflow**，标签留空即可
 > （只跑 `build`，产出 artifact）。
@@ -706,26 +709,29 @@ git push origin v1.0.0.4
 - 深浅色自适应、移动端适配、`prefers-reduced-motion` 尊重、无外部字体 / 框架 / CDN ——
   把文件丢到任何静态托管都能用。
 
-**部署到 GitHub Pages（一次配置）**：仓库 → **Settings → Pages** → Source 选 **GitHub Actions**。
-之后每次 push 到默认分支，`pages` 任务会自动更新线上页面。
+**部署到 GitHub Pages（一次配置）**：仓库 → **Settings → Pages** → Source 选 **Deploy from a branch**
+（分支 `master`、目录 `/ (root)`）。
 
-线上地址按仓库名推得（仓库名以 `--` 开头，注意两个连字符）：
+页面是**纯静态**的：下载按钮在浏览器里 `fetch` GitHub Releases API 拿最新 APK，
+所以 GitHub 每次从分支发布出来的就是最新页面，**不需要 CI 参与** —— workflow 里因此
+**没有** `pages` job（原来那个要求 Source 是「GitHub Actions」，而那是必须人工点一次的
+仓库级设置：`GITHUB_TOKEN` 无权创建/修改 Pages 站点，所以它只会让每次 push 白红一次）。
+
+线上地址按仓库名推得：
 
 ```
 https://ksayus.github.io/--ManyCourse/
 ```
 
-> 因为是 Actions 部署，**不需要**把 `docs/` 打开成 Pages 源，也不需要额外的 `gh-pages` 分支，
-> 更不用把 `index.html` 挪进 `docs/`。
+> 不需要额外的 `gh-pages` 分支，也不用把 `index.html` 挪进 `docs/`。
 
 ### 7.5 常见 CI 失败
 
 | 报错 | 处理 |
 |---|---|
 | `SDK location not found` | 不要提交 `local.properties`；CI 是靠 runner 自带的 `ANDROID_HOME` 工作的 |
-| `Failed to find Platform SDK with path: platforms;android-37` | runner 镜像还没带 Platform 37 → workflow 里 `sdkmanager` 那一行会补装；若仍失败，把 compileSdk 暂时降到镜像已有的版本 |
-| `Permission denied: ./gradlew` | 仓库里的 `gradlew` 丢了可执行位：`git update-index --chmod=+x gradlew` |
-| Pages 部署 403 | Settings → Pages 的 Source 没选 **GitHub Actions** |
+| `Failed to find package 'platforms;android-37'` | 包名错了：API 37 起平台按**次版本**发布，叫 `platforms;android-37.0`（装完就是 `platforms/android-37.0/`）。workflow 现在会自己从仓库索引里挑 `platforms;android-37.x`，不用手写 |
+| `Permission denied: ./gradlew` | 仓库里的 `gradlew` 没有可执行位（在 Windows 上提交的常见坑）：已在仓库里改成 `100755`（`git update-index --chmod=+x gradlew`），workflow 里也把 `chmod +x gradlew` 放在所有 `./gradlew` 之前兜底 |
 | Release 里没有 APK | 没配签名 Secrets，或 tag 不是 `v*` 形式（`v1.0.0` 才对，`1.0.0` 不触发） |
 
 ---

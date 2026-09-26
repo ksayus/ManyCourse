@@ -1,10 +1,12 @@
 name: Android CI/CD
 
 # ─────────────────────────────────────────────────────────────────────────────
-#  三个 Job：
+#  两个 Job（纯 CI/CD）：
 #    build   推分支 / PR      → 跑全部单测 + 出 debug 与未签名 release 包（artifact）
 #    release 推 v* 标签       → Secrets 签名出正式包 → 自动发 GitHub Release（附 APK）
-#    pages   推默认分支       → 部署 index.html 到 GitHub Pages（在线下载页）
+#
+#  （**没有**部署 Pages 的 job，原因见文件末尾的说明 —— 下载页是纯静态的，
+#    由 Pages 的「Deploy from a branch」直接发布，不需要 CI 参与。）
 #
 #  设计上的几条硬要求：
 #    - 没有签名 Secrets 也能跑：跳过签名，产出未签名包，绝不因为缺密钥而失败；
@@ -388,93 +390,19 @@ jobs:
           done
           echo "✅ Gitee Release ${TAG} 已发布：https://gitee.com/${GITEE_REPO}/releases/tag/${TAG}"
 
-  # ══════════════════════════════════════════════════════════════════════════
-  # 3) 持续部署：下载页上 Pages
-  # ══════════════════════════════════════════════════════════════════════════
-  pages:
-    name: Deploy Download Page
-    # 只在默认分支的推送、或手动触发时部署
-    if: >-
-      (github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch))
-      || github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    permissions:
-      contents: read
-      pages: write
-      id-token: write
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-    # 不取消进行中的部署：Pages 部署被中断会留下半成品
-    concurrency:
-      group: pages
-      cancel-in-progress: false
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      # ── 为什么要有这一步：Pages 站点必须先由**人**打开一次 ────────────────────
-      # 仓库没开 Pages 时，`configure-pages` 只会甩一句
-      #   "Get Pages site failed ... Error: Not Found"（找不到"该由你创建的东西"）
-      # 它自带的 `enablement: true` 也救不了：**创建 Pages 站点是仓库管理级操作，
-      # GITHUB_TOKEN 永远没有这个权限**（写什么 `permissions:` 都没用，这是故意的安全边界），
-      # 加了只会换成另一句更费解的 "Resource not accessible by integration"。
-      # 一次性的人工操作（只需点一下，之后每次推送都自动部署）：
-      #   Settings → Pages → Build and deployment → Source 选「GitHub Actions」
-      # 这一步提前把话说清楚，省得你对着 Not Found 查半天工作流。
-      - name: Check Pages is enabled
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          # curl 自己失败（断网等）不算错误，交给下面的最后一条分支处理
-          resp=$(curl -sS \
-            -H "Authorization: Bearer $GH_TOKEN" \
-            -H "Accept: application/vnd.github+json" \
-            -w '\n%{http_code}' \
-            "https://api.github.com/repos/${{ github.repository }}/pages" || true)
-          code=$(printf '%s' "$resp" | tail -n1)
-          body=$(printf '%s' "$resp" | sed '$d')
-          case "$code" in
-            200)
-              build_type=$(printf '%s' "$body" \
-                | python3 -c "import sys,json;print(json.load(sys.stdin).get('build_type',''))" 2>/dev/null || true)
-              if [ "$build_type" != "workflow" ]; then
-                echo "❌ Pages 站点存在，但 Source 不是「GitHub Actions」（当前 build_type='$build_type'）。"
-                echo "   打开 https://github.com/${{ github.repository }}/settings/pages"
-                echo "   → Build and deployment → Source 改成「GitHub Actions」→ 回来重跑本 job。"
-                exit 1
-              fi
-              echo "✅ Pages 站点已就绪（build_type=workflow）"
-              ;;
-            404)
-              echo "❌ 仓库还没有 Pages 站点，所以 configure-pages 报 'Not Found'。"
-              echo "   打开 https://github.com/${{ github.repository }}/settings/pages"
-              echo "   → Build and deployment → Source 选「GitHub Actions」→ 回来重跑本 job。"
-              echo "   （只需点这一次。这一步 GITHUB_TOKEN 代替不了：创建 Pages 站点是仓库管理级操作。）"
-              exit 1
-              ;;
-            *)
-              echo "⚠️  查询 Pages 状态返回 HTTP '${code:-无响应}'，判断不了，继续交给 configure-pages"
-              ;;
-          esac
-
-      - name: Configure Pages
-        uses: actions/configure-pages@v5
-
-      # 只发布静态页，别把任何构建目录带走（仓库根作为站点根，index.html 直接可访问）
-      - name: Prune build outputs
-        run: rm -rf app/build build .gradle .kotlin
-
-      - name: Upload site
-        uses: actions/upload-pages-artifact@v3
-        with:
-          # 整仓库根目录：index.html 在根上（根目录没有下划线开头的文件，
-          # 不会踩 Jekyll 的忽略规则；真加了再补 .nojekyll）
-          path: .
-
-      - name: Deploy to GitHub Pages
-        id: deployment
-        uses: actions/deploy-pages@v4
+  # ─────────────────────────────────────────────────────────────────────────────
+  # 这里**故意没有** `pages` job（2026-09 去掉的，原来有第三个 job）。
+  #
+  # 原因：下载页 `index.html` 是纯静态的 —— 下载按钮是页面运行时自己 `fetch` GitHub
+  # Releases API 拿最新 release 的 APK（见文件顶部 CONFIG 与 7.4 节），**不需要构建**。
+  # 而仓库的 Pages Source 是「Deploy from a branch」：GitHub 直接拿分支上的文件发布，
+  # 整个部署过程跟 Actions 无关。
+  #
+  # 那个 job 反而注定失败：`upload-pages-artifact` / `deploy-pages` 要求 Source 是
+  # 「GitHub Actions」，而改这个 Source 是**人工**操作（创建/修改 Pages 站点是仓库管理级
+  # 权限，`GITHUB_TOKEN` 没有，写什么 `permissions:` 都不行），于是每次 push 都白红一次，
+  # 还容易让人以为"构建挂了"。
+  #
+  # 将来想让 CI 来部署页面：Settings → Pages → Source 改成「GitHub Actions」，
+  # 再把那个 job 从 git 历史里捡回来（`git log -p -- .github/workflows/android-ci.yml`）。
+  # ─────────────────────────────────────────────────────────────────────────────
