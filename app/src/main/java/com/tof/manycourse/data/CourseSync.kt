@@ -103,6 +103,11 @@ object CourseSync {
         api.fetchProfile(account) { profile ->
             val name = profile.getOrNull()?.name.orEmpty()
             main {
+                // 这次请求是给"当时那个账号"拉的。网络回来时可能已经退出登录 / 换了账号，
+                // 那这份姓名就属于上一个人：一个字都不能落到他之外的账号上
+                // （`ProfileRepository.applySchoolProfile` 会把它写进当前绑定的账号）。
+                if (SessionStore.account.value != account) return@main
+
                 profile.onSuccess { student ->
                     // ★ 需求：当前的账户名字自动写成学校系统中会显示的名字
                     //   但**用户自己在「编辑资料」里改过的名字优先** —— 否则改完下次冷启动就被打回去

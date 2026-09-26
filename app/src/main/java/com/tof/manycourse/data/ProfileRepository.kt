@@ -37,6 +37,13 @@ import androidx.compose.runtime.mutableStateOf
  * 如果无条件覆盖，用户改完名字下次冷启动就被打回去了 —— "改了等于没改"。
  * 所以每个账号、每个字段各记一个"用户自己动过"的标记。
  *
+ * ## 两条路径**都落盘**（学校那条以前漏了）
+ *
+ * 落盘不只是"用户改过"的事：学校同步回来的姓名 / 专业同样写进这个账号的存档
+ * （见 [applySchoolProfile]）。否则那份资料只活在内存里，下次冷启动读不到 ——
+ * 而下次打开往往正是**离线、课表走本地缓存（静态数据）**的那一次：
+ * 同步不会把姓名补回来，界面上就一直是占位学生，看着像"我的信息不是我的"。
+ *
  * ## 线程
  *
  * [attach] 在 `ManyCourseApp.onCreate` 里跑（只开一次 SharedPreferences，几毫秒），
@@ -54,7 +61,13 @@ object ProfileRepository {
     private const val FIELD_NICKNAME_CUSTOM = "nickname_custom"
     private const val FIELD_MAJOR_CUSTOM = "major_custom"
 
-    /** 没登录 / 新账号还没同步到学校资料时的占位文案 */
+    /**
+     * 新账号**还没同步到学校资料**时的占位文案。
+     *
+     * ★ **未登录不用它**：那种情况没有身份，走 [clearToLoggedOutCopy]（"未登录" / 空专业）。
+     * 在这里放一个编出来的学生（姓名 + 专业）当"未登录"的显示，
+     * 结果是用户在一台没登录教务系统的手机上看到别人的资料。
+     */
     private const val DEFAULT_NICKNAME = "张同学"
     private const val DEFAULT_MAJOR = "计算机科学 · 2022级"
 
@@ -101,14 +114,17 @@ object ProfileRepository {
      * 绑定到某个账号：把**这个账号自己存过的**资料读回内存。
      *
      * 调用时机：冷启动恢复会话后（`ManyCourseApp`）、以及每次登录成功（`SessionStore.onLogin`）。
-     * 账号为空（未登录）时清成默认文案。
+     *
+     * 账号为空（未登录）时清成**中性文案**（与 [onLogout] 同一份），
+     * 而不是占位学生「张同学」：没有身份的时候，界面上就不该出现一个人的姓名和专业。
+     * 存档里有学校同步回来的姓名 / 专业（[applySchoolProfile] 落的盘）就一并用上，
+     * 所以**离线打开（课表走本地缓存 / 静态数据）也能显示对人**。
      */
     fun bindAccount(schoolId: String?, account: String) {
         val key = profileStorageKey(schoolId, account)
         storageKey = key
         if (key == null) {
-            nicknameState.value = DEFAULT_NICKNAME
-            majorState.value = DEFAULT_MAJOR
+            clearToLoggedOutCopy()
             return
         }
         val s = storage
@@ -146,13 +162,34 @@ object ProfileRepository {
      * 教务系统同步回来的姓名 / 专业：**只在用户没亲手改过这一项时**才采用。
      *
      * 空值一律忽略（学校没给这一项时，不要把界面上显示的东西擦掉）。
+     *
+     * ## 采用之后**同时落盘**（这一条以前漏了）
+     *
+     * 只改内存的话，这份姓名只活到进程结束：下次冷启动 [bindAccount] 在存档里
+     * 读不到任何东西，只能退回占位文案（"张同学 / 计算机科学 · 2022级"）。
+     * 而"下次打开"恰恰经常是**连不上教务系统、课表走本地缓存（静态数据）**的那一次 ——
+     * 那时同步根本不会把姓名补回来，用户看到的就是「我的」页个人信息不是自己的。
+     *
+     * 落盘只写**值**，不写"用户自己改过"的标记（`markCustomized = false`）：
+     * 用户没定过这一项时，学校以后改了姓名照样能同步过来（见 [write]）。
+     *
+     * 没有绑定账号（已退出登录 / 还没登录）时**整段忽略**：这批数据属于"某一次登录"，
+     * 现在没有身份 —— 既不写盘，也不能把界面上的中性文案改成某个学生的名字。
+     * 同步回调完全可能在退出登录之后才落地，那正是"退出登录后还显示上一个人的名字"的来源。
      */
     fun applySchoolProfile(name: String, subtitle: String) {
-        val key = storageKey
+        val key = storageKey ?: return
         if (name.isNotBlank() && !isCustomized(FIELD_NICKNAME_CUSTOM, key)) {
+            // 值没变就不重复写盘：每次同步 / 下拉刷新都会经过这里
+            if (name != nicknameState.value) {
+                write(FIELD_NICKNAME, FIELD_NICKNAME_CUSTOM, name, markCustomized = false)
+            }
             nicknameState.value = name
         }
         if (subtitle.isNotBlank() && !isCustomized(FIELD_MAJOR_CUSTOM, key)) {
+            if (subtitle != majorState.value) {
+                write(FIELD_MAJOR, FIELD_MAJOR_CUSTOM, subtitle, markCustomized = false)
+            }
             majorState.value = subtitle
         }
     }
@@ -165,6 +202,17 @@ object ProfileRepository {
      */
     fun onLogout() {
         storageKey = null
+        clearToLoggedOutCopy()
+    }
+
+    /**
+     * 界面上没有身份时该显示的东西（退出登录 / 冷启动就没有会话，两种情形同一份文案）。
+     *
+     * 必须与 [bindAccount] 在"没有账号"时走**同一条路**：早先只有 [onLogout] 用了这套
+     * 中性文案，而冷启动的 [bindAccount] 回落到占位学生「张同学」——
+     * 同一个"未登录"状态因此有两种显示，来回切一次就变一次。
+     */
+    private fun clearToLoggedOutCopy() {
         nicknameState.value = LOGGED_OUT_NICKNAME
         majorState.value = ""
     }

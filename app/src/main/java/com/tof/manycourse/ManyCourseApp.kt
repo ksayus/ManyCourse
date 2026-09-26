@@ -33,7 +33,10 @@ class ManyCourseApp : Application() {
         // Wi-Fi 指纹库（室内"我在这儿"用）：同样是自己采的 + 随版本下发的
         WifiFingerprintStore.attach(this)
         // 会话恢复出来之后才知道"现在的资料属于谁"：把那个账号自己存过的昵称/专业读回来，
-        // 于是冷启动首帧「我的」页显示的就是用户改过的名字（而不是默认的"张同学"）
+        // 于是冷启动首帧「我的」页显示的就是这个人自己那一份（用户改过的名字、或上次登录时
+        // 学校同步回来的姓名 —— 两者都会落盘），而不是占位学生"张同学"。
+        // ★ 这一步**不依赖网络**：离线打开（课表走本地缓存 / 静态数据）时同步补不回来，
+        //   全靠这里读盘，所以「我的」页照样是对的。
         ProfileRepository.bindAccount(SessionStore.schoolId.value, SessionStore.account.value)
         ScheduleCache.prime(SessionStore.schoolId.value, SessionStore.account.value)
     }

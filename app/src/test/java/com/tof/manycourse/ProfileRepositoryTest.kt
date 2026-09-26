@@ -181,4 +181,76 @@ class ProfileRepositoryTest {
         ProfileRepository.bindAccount(null, "admin")
         assertEquals("调试同学", ProfileRepository.nickname.value)
     }
+
+    // ── 学校同步回来的姓名 / 专业必须落盘（否则下次离线打开就"不是我的信息"）──────────
+    //
+    // 这一组钉的就是那个 bug：登录时学校给的姓名以前**只改内存**，进程一结束就没了；
+    // 而下次打开往往连不上教务系统（课表走本地缓存 / 静态数据），同步不会把姓名补回来 ——
+    // 「我的」页就一直是占位学生「张同学 / 计算机科学 · 2022级」，看着像别人的资料。
+    // 模拟冷启动的办法：用**同一份** [MemoryStorage] 再 attach 一次
+    // （`storageKey` 会被清空，等价于新进程里还没绑定账号）。
+
+    @Test
+    fun schoolNameIsRecordedSoTheNextColdStartStillShowsIt() {
+        ProfileRepository.bindAccount("gzus", "20221101")
+        ProfileRepository.applySchoolProfile("李某某", "软件工程 · 计算机学院")
+
+        ProfileRepository.attachStorage(storage) // 冷启动
+
+        // 只 bindAccount、没有任何同步：姓名和专业也必须是登录时记下来的那一份
+        ProfileRepository.bindAccount("gzus", "20221101")
+        assertEquals("李某某", ProfileRepository.nickname.value)
+        assertEquals("软件工程 · 计算机学院", ProfileRepository.major.value)
+    }
+
+    @Test
+    fun userEditedNicknameStillWinsOverTheRecordedSchoolName() {
+        ProfileRepository.bindAccount("gzus", "20221101")
+        ProfileRepository.applySchoolProfile("李某某", "软件工程 · 计算机学院")
+        // 用户在「编辑资料」里改过 → 从这一刻起它是权威
+        ProfileRepository.setNickname("小李")
+
+        ProfileRepository.attachStorage(storage) // 冷启动
+        ProfileRepository.bindAccount("gzus", "20221101")
+        assertEquals("小李", ProfileRepository.nickname.value)
+
+        // 下一次同步也不能把记下来的学校姓名打回去
+        ProfileRepository.applySchoolProfile("李某某（转专业）", "")
+        assertEquals("小李", ProfileRepository.nickname.value)
+    }
+
+    @Test
+    fun recordedSchoolNameDoesNotLeakToAnotherAccount() {
+        ProfileRepository.bindAccount("gzus", "20221101")
+        ProfileRepository.applySchoolProfile("李某某", "软件工程 · 计算机学院")
+
+        ProfileRepository.attachStorage(storage) // 冷启动
+
+        // 同一个学校的另一个账号：看到的是占位文案，不是上一个人的姓名/专业
+        ProfileRepository.bindAccount("gzus", "20221102")
+        assertEquals("张同学", ProfileRepository.nickname.value)
+        assertEquals("计算机科学 · 2022级", ProfileRepository.major.value)
+    }
+
+    @Test
+    fun schoolProfileCannotLandOnTheLoggedOutScreen() {
+        ProfileRepository.bindAccount("gzus", "20221101")
+        ProfileRepository.onLogout()
+
+        // 同步回调完全可能在退出登录之后才落地 —— 那是上一个人的姓名，一个字都不该写上去
+        ProfileRepository.applySchoolProfile("李某某", "软件工程 · 计算机学院")
+
+        assertEquals("退出登录后不该冒出别人的名字", "未登录", ProfileRepository.nickname.value)
+        assertEquals("", ProfileRepository.major.value)
+    }
+
+    @Test
+    fun coldStartWithoutASessionShowsTheLoggedOutCopy() {
+        // `ManyCourseApp.onCreate` 在没有会话时就是这么调的（学校 / 账号都是空）：
+        // 不能回落到占位学生「张同学」—— 那会让"未登录"看起来像"登录了别人"
+        ProfileRepository.bindAccount(null, "")
+
+        assertEquals("未登录", ProfileRepository.nickname.value)
+        assertEquals("没有身份就不该显示编出来的专业", "", ProfileRepository.major.value)
+    }
 }
