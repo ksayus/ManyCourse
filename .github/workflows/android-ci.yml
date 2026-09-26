@@ -106,13 +106,19 @@ jobs:
           # （本地 SDK 里只装了 platforms/android-37.0 + build-tools/36.0.0，debug/release 都出得来）
           "$SDKMANAGER" --install 'platform-tools' "$PLATFORM" 'build-tools;36.0.0'
 
+      # ⚠️ 这一步必须在**任何** `./gradlew` 之前 —— 它原来排在 `./gradlew --version` 后面，
+      # 于是 CI 第一步就 `./gradlew: Permission denied`（exit 126）。
+      # 根因：仓库里 gradlew 的 git 文件模式是 100644（在 Windows 上 checkout/commit 的，
+      # 而 `core.filemode=false` 让 git 一直没记下可执行位），Linux runner 上 checkout 出来就没有 x。
+      # 已经在仓库里改成 100755（`git update-index --chmod=+x gradlew`），这行 chmod 是保险丝：
+      # 万一以后再被 Windows 上的提交冲掉，CI 也不会挂。
+      - name: Grant execute permission for gradlew
+        run: chmod +x gradlew
+
       - name: Show toolchain versions
         run: |
           java -version
           ./gradlew --version
-
-      - name: Grant execute permission for gradlew
-        run: chmod +x gradlew
 
       # ── 单测（JVM）：解析器 / 加密 / 选校区 / 节次表 / 会话存档 ──────────────
       - name: Run unit tests
