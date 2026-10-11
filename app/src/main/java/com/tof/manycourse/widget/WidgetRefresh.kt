@@ -5,13 +5,18 @@ import android.appwidget.AppWidgetManager
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
+import android.content.res.Configuration
 import android.util.TypedValue
 import android.widget.RemoteViews
+import androidx.compose.ui.graphics.toArgb
 import com.tof.manycourse.MainActivity
 import com.tof.manycourse.R
 import com.tof.manycourse.data.ClassSlot
 import com.tof.manycourse.data.UpcomingClass
+import com.tof.manycourse.data.UiSettings
 import com.tof.manycourse.data.formatDistance
+import com.tof.manycourse.ui.theme.GlassMode
+import com.tof.manycourse.ui.theme.glassTokens
 import java.time.LocalDate
 import java.time.LocalDateTime
 
@@ -36,6 +41,32 @@ import java.time.LocalDateTime
  *
  * 走 `UpcomingClass.forDisplay`，也就是课表页 / 日历页同一套取值口径
  * （`coursesOfDate` + `dayIsLit`）。小组件**不自己算课表**。
+ *
+ * ## ★ 为什么小组件的玻璃**做不到真模糊**
+ *
+ * 小组件跑在**启动器的进程**里，界面由 `RemoteViews` 描述、由**桌面**去 inflate。
+ * 它拿不到自己背后的东西 —— 壁纸是什么、底下压着哪个页面，它一概看不见，
+ * 系统也不会把那段像素交给它。所以 App 里页头/底栏用的 Haze（`RenderEffect`）
+ * 在小组件里**做不到**：没有可采样的"背后内容"，模糊谁？
+ *
+ * 这是**平台边界，不是取舍**。能做到的是把玻璃的**观感**静态地画出来：
+ * 半透明底 + 顶部柔光渐变（令牌 `highlight`）+ 1dp 亮边（令牌 `border`）+
+ * 内侧同色系着色（令牌 `innerTint`，只有液态那一档还加 `innerShadow`）。
+ * 四层都是一帧画一次就定住的静态绘制 —— 小组件本来也没有逐帧概念，§5 的性能清单不受影响。
+ *
+ * ## 跟随 App 的玻璃设置（玻璃风格 + 配色预设）
+ *
+ * 小组件进程里读 `SharedPreferences` 是**安全的**（[UiSettings] 就是一层 prefs 读写），
+ * 所以底板与强调色都跟着设置走，不另立一套：
+ *
+ * | 设置 | 影响 | 怎么落地 |
+ * |---|---|---|
+ * | `UiSettings.glassMode`（高斯 / 液态）| 底板 drawable | [baseDrawable] → `setInt(root, "setBackgroundResource", …)` |
+ * | `UiSettings.glassPalette`（6 套配色）| 该用强调色的那几行 | `setTextColor(…, tokens.accent)` |
+ *
+ * ★ 强调色由 `glassTokens(mode, dark, palette).accent` **算出来**，不在这里编色值：
+ * 它是被 `GlassPaletteContrastTest` 钉过对比度的那个数（小字色），
+ * 而小组件的底就是同一份 `barTint` —— 令牌一改，桌面跟着改，不会漂移。
  */
 object WidgetRefresh {
 
@@ -52,6 +83,30 @@ object WidgetRefresh {
      * 把 2x2 的格子撑得头重脚轻（真机截图里一眼就看出来了）。
      */
     private const val EMPTY_TITLE_SP = 14f
+
+    /**
+     * 底板 drawable 的选择（纯函数，`WidgetGlassBaseTest` 钉住映射）。
+     *
+     * 两档是两份 `layer-list`（不是同一份的两组取值）：`RemoteViews` 只能用
+     * **资源 id** 换底板，跑不了"按设置改 drawable 内部某个颜色"这种事。
+     */
+    fun baseDrawable(mode: GlassMode): Int = when (mode) {
+        GlassMode.Gaussian -> R.drawable.widget_next_class_bg
+        GlassMode.Liquid -> R.drawable.widget_next_class_bg_liquid
+    }
+
+    /**
+     * 两块底板**画在底下的那个底色**（= 令牌 `barTint`，ARGB）。
+     *
+     * 这两个数**不是**新的样式决策，而是把"drawable 里那份固定色值"与令牌对齐的口径 ——
+     * 它是 `WidgetGlassBaseTest` 用来拦"改了令牌忘了改桌面"的那条对照：
+     * `widget_glass_surface` / `widget_glass_liquid_surface` 必须与这里逐通道相同。
+     *
+     * 为什么是 `barTint` 而不是 `cardTint`：小组件是 2x2 的**大表面**（页头/底栏那一档），
+     * 卡片那一档（78% 白）是给滚动列表里的重复项用的（见 `glassSurface` 的注释）。
+     */
+    fun surfaceTint(mode: GlassMode, dark: Boolean): Int =
+        glassTokens(mode, dark).barTint.toArgb()
 
     /**
      * 刷新所有「下一节课」小组件。
@@ -81,6 +136,11 @@ object WidgetRefresh {
     fun render(context: Context, now: LocalDateTime): RemoteViews {
         val views = RemoteViews(context.packageName, R.layout.widget_next_class)
 
+        // ★ 小组件进程是**独立**的：App 可能从没在这个进程里跑过，于是 UiSettings
+        //   还没从 prefs 读过值（默认恒为「高斯 + 校园蓝」）。attach 是幂等的 O(1)，
+        //   在这里调一次，桌面才不会出现"设置里明明是液态玻璃、桌面还是高斯"
+        UiSettings.attach(context)
+
         // ★ **先问"有没有可信的课表数据"，再去解"下一节课"。顺序不能反。**
         //
         //   反过来的话，没登录 / 从没同步过的手机上，`coursesOfDate` 会把
@@ -92,6 +152,16 @@ object WidgetRefresh {
         val slot = if (hasScheduleData) UpcomingClass.forDisplay(now) else null
 
         views.setOnClickPendingIntent(R.id.widget_root, openAppIntent(context))
+
+        // 底板：按用户选的玻璃风格切换（小组件只能换**资源**，见 baseDrawable）。
+        // 用 `setInt(id, "setBackgroundResource", res)` 而不是 `setBackgroundResource`：
+        // RemoteViews 对外的方法就是 setInt（它按名字反射调用 View 上的
+        // @RemotableViewMethod；`View.setBackgroundResource(int)` 正是其中之一）
+        views.setInt(R.id.widget_root, "setBackgroundResource", baseDrawable(UiSettings.glassMode.value))
+
+        // 强调色：该用强调色的两行（地点 / 状态）跟着**配色预设**走。
+        // 只在有课时着色；空态两行是说明文字，走布局里的中性色才不至于抢戏
+        val accent = widgetAccent(context)
 
         if (slot == null) {
             // 两种"没课可显示"必须分开（见 strings.xml 那段注释）：
@@ -110,6 +180,10 @@ object WidgetRefresh {
             )
             views.setTextViewText(R.id.widget_meta, "")
             views.setTextViewText(R.id.widget_room, "")
+            // 同一个 RemoteViews 可能被复用（上一轮有课、这一轮空）：把着色复位，
+            // 否则"没有课表数据"会顶着上一轮的强调色
+            views.setTextColor(R.id.widget_room, context.getColor(R.color.widget_room))
+            views.setTextColor(R.id.widget_status, context.getColor(R.color.widget_status))
             return views
         }
 
@@ -130,8 +204,30 @@ object WidgetRefresh {
         )
         views.setTextViewText(R.id.widget_room, slot.room)
         views.setTextViewText(R.id.widget_status, statusText(context, slot, now.toLocalDate()))
+        // ★ 该用强调色的两行：地点（去哪儿上课）与状态（现在/还有多久）——
+        //   与 App 里用 `tokens.accent` 的那几处同一套语言（页头刷新按钮、底栏选中态）
+        views.setTextColor(R.id.widget_room, accent)
+        views.setTextColor(R.id.widget_status, accent)
         return views
     }
+
+    /**
+     * 当前配色预设的强调色（ARGB）。
+     *
+     * 深色判定用 `resources.configuration`（桌面进程里就是系统的深色设置）：
+     * 小组件是**独立进程**，拿不到 App 侧的 `isSystemInDarkTheme()`，
+     * 而令牌的 `accent` 明暗两档差别很大（浅色档在深底上读不清），必须跟着系统走。
+     */
+    private fun widgetAccent(context: Context): Int = glassTokens(
+        mode = UiSettings.glassMode.value,
+        dark = context.resources.configuration.isNightMode(),
+        palette = UiSettings.glassPalette.value,
+    ).accent.toArgb()
+
+    /** 系统是否处于深色模式（与 `MainActivity.isNightMode()` 同一判定，两处都得各自读自己的 Resources）*/
+    private fun Configuration.isNightMode(): Boolean =
+        (uiMode and Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES
+
 
     /**
      * 状态行：`正在上课` / `还有 12 分钟` / `今天` / `明天 9:00` / `周三 9:00`。

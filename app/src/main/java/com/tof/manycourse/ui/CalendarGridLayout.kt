@@ -25,9 +25,7 @@ import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Slider
@@ -57,7 +55,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.tof.manycourse.data.Course
@@ -123,17 +123,132 @@ private val AxisCandidates = listOf(
 )
 
 /**
- * 一行（两节）的高度**不再写死**：它由"这一屏还剩多少高度"决定（见 [GridBody]）。
+ * 一行的高度**不再写死**：它由"这一屏还剩多少高度"决定（见 [gridRowHeight]）。
  *
- * 于是"整周一眼看完、不用上下滚动"和"卡片尽量大"能同时成立：
- * 屏幕高、行数少就长得高（[MaxRowHeight] 封顶），屏幕矮就压下来（[MinRowHeight] 兜底），
- * 实在压不下才让网格自己内部滚动。
+ * ## ★ 为什么只有上限、**没有下限**
+ *
+ * 早先这里是 `(maxHeight ÷ rowCount).coerceIn(MinRowHeight, MaxRowHeight)`。那个下限
+ * 正是"内容超出屏幕"的唯一来源：节次多（广工 12 行）或屏幕矮时，`rowCount × 下限`
+ * 已经比 `maxHeight` 还大，于是 [GridBody] 只能挂一层内部滚动兜底 ——
+ * 而周视图的承诺是"整周一眼看完、手指往下滑屏幕不动"，一挂滚动这条承诺就破了
+ * （用户滑到的是一张比屏幕更高的课表，星期表头也跟着被推走）。
+ *
+ * 现在下限删掉了：**总高恒等于 `可用的高 ÷ 行数 × 行数 ≤ 可用高`**，
+ * 放不下时不再"滚"，而是让**骨架自己降级**（[GridAxisLabels.lineCount] 减行、
+ * [gridCardTier] 退档），因为"一屏看完"比"每行都够高"重要得多 ——
+ * 位置本身就是信息（第几行 = 第几节），看不全就等于看不出来。
+ *
+ * ## 上限为什么留着
+ *
+ * 课少的时候（整个学期只排到第 6 节 → 6 行）除以 6 会得到 100dp 上下的一行，
+ * 三行时间轴与一张只有课名的卡片被拉到整屏 —— 那是"空壳"，不是"更大"。
+ * 到 [MaxRowHeight] 就停住，多出来的高度由 [GridBody] 的居中吸收。
  */
-private val MinRowHeight = 36.dp
 private val MaxRowHeight = 88.dp
 
-/** 行高低于它时卡片进入"紧凑"排版（字号收一档、留白收紧），保证**任何字都不会被裁掉** */
+/**
+ * 真实无界高度（理论上不会发生 —— 调用方给 `weight(1f)`）时的兜底行高。
+ *
+ * 取 [MaxRowHeight] 而不是某个"最小行高"：兜底路径下唯一可确定的事是
+ * "不滚动"，所以不必也不该再造一个会把内容顶出屏幕的下限。
+ */
+private val FallbackRowHeight = MaxRowHeight
+
+/**
+ * 卡片进入**紧凑档**的参考行高（1080p / fontScale 1.17 下的实测值）。
+ *
+ * ★ 它**不参与判定** —— 门槛由 [gridCardTier] 按当前字体度量现算（写死 dp 的话，
+ * 系统字号一调大，"放得下"就变成"刚好放不下"）。留在这里是因为它是
+ * `GridCardTierTest` 里那组边界断言的来历：8 行的密课表每格 46dp 上下，
+ * 广工 12 行只有 30~35dp，描述的就是这两个数。
+ */
 private val CompactCardRowHeight = 62.dp
+
+/**
+ * 网格**一行有多高**（纯函数，`GridRowHeightTest` 钉住）。
+ *
+ * ```
+ * 行高 = 可用高度 ÷ 行数        // 只封上限，没有下限
+ * 总高 = 行高 × 行数 ≤ 可用高度  // 恒成立
+ * ```
+ *
+ * ## 为什么**不能有下限**
+ *
+ * 上下限同时存在时，`行高 × 行数` 会被下限顶到超出可用高度 —— 这正是周视图
+ * 早先必须挂一层内部滚动的原因（节次多的学校 / 矮屏）。而周视图的承诺是
+ * **"整周一眼看完，手指往下滑屏幕不动"**：一旦有滚动，滑走的不只是课程，
+ * 连星期表头都会跟着走，"第几行 = 第几节"这个坐标系就散了。
+ *
+ * 所以放不下时**不滚、也不裁**，而是让骨架降级：时间轴减行（[axisLabelsFor]）、
+ * 卡片退到最紧凑档（[gridCardTier]）。
+ *
+ * ## 为什么留上限
+ *
+ * 课少（整个学期只排到第 6 节 → 6 行）时除以 6 会得到 100dp 上下一行，
+ * 三行小字与一张只有课名的卡片被拉到整屏 —— 那是空壳不是"更大"。
+ *
+ * ## 除不尽的余数去哪了
+ *
+ * 先除、再**向下取整到 0.5dp**：取整只会让总高更小，所以 `行数 × 行高 ≤ 可用高度`
+ * 这条不变式**不依赖**取整方式。除不尽的余数（例如 16 行 ÷ 688dp 余 16dp）由
+ * [GridBody] 的 `contentAlignment = Center` 上下均分吸收 ——
+ * 这正是"没有滚动"能成立的原因：**内容永远不会比槽位更高**。
+ *
+ * ★ 上限必须**参与取整之后再封顶**，不能写成 `min(上限, 除法结果)`：
+ * 那样在"很少几行 + 很高的屏"上会出现 `上限 × 行数 > 可用高度`
+ * （上限 88dp × 3 行 = 264dp > 240dp 的可用高度）——总高一超出，就又得滚了。
+ * 所以取的是"可用高度允许的上限"与"令牌上限"里更小的那个。
+ *
+ * @param availableHeight 这一屏真正剩给网格的高度（[GridBody] 量出来的 `maxHeight`）
+ * @param rowCount 要画几行（[gridRowCount]）；非正数视为 1，免得除零
+ */
+internal fun gridRowHeight(availableHeight: Dp, rowCount: Int): Dp {
+    val rows = rowCount.coerceAtLeast(1)
+    // 无界高度（理论上不会发生：调用方给 weight(1f)）：退回上限。
+    // 不造"最小行高"是因为那个下限正是会把内容顶出屏幕的东西（见上面 KDoc）
+    if (!availableHeight.value.isFinite()) return FallbackRowHeight
+    if (availableHeight.value <= 0f) return 0.dp
+
+    // 向下取整到 0.5dp：总高只会变小。行数多时这一步不起作用（本来就是小数），
+    // 行数少 + 高屏时它保证"行数 × 行高"不会因为取整反而越过可用高度
+    val even = ((availableHeight.value / rows) * 2f).toInt().toFloat() / 2f
+    // 上限：既不超过令牌的 MaxRowHeight，也不超过"这一屏分给每行的上限"
+    val ceiling = minOf(MaxRowHeight.value, even)
+    return ((ceiling * 2f).toInt().toFloat() / 2f).dp
+}
+
+/**
+ * 时间轴这一档画哪几行（纯函数，`GridRowHeightTest` 钉住）。
+ *
+ * @param lineCount 1 = 只画节次，3 = 节次 + 起止时刻（与 [PeriodAxis] 画的行数一致）
+ * @param withStartTime 起止时刻要不要画（= `lineCount == 3`）
+ */
+internal data class GridAxisLabels(val lineCount: Int, val withStartTime: Boolean)
+
+/** 时间轴两行文字之间想要的呼吸（用来推"三行放不下"的门槛）*/
+private val AxisLabelLineSpacing = 2.dp
+
+/**
+ * 行高不够时**自动减行**（纯函数，`GridRowHeightTest` 钉住）。
+ *
+ * 三行小字（`9:00` / `第1节` / `9:40`）至少需要 `3 × 行高 + 2 × 行间距`。
+ * 塞不下时**整行去掉起止时刻**，只留节次：
+ *
+ *  - 节次**不能丢** —— 它是这张网格的唯一坐标（"第几行 = 第几节"，见 §2.5）；
+ *  - 时刻**可以丢** —— 那个块没收录作息时它本来就是空的，而且能从节次推出来；
+ *  - **绝不允许溢出到相邻行**：相邻行是**别的节次**，溢出等于把刻度本身画错。
+ *
+ * @param rowHeight 当前行高（[gridRowHeight] 算出）
+ * @param lineHeight 当前档位一行文字的高度（`sp.toDp()`，已含 `fontScale`）
+ */
+internal fun axisLabelsFor(rowHeight: Dp, lineHeight: Dp): GridAxisLabels {
+    val threeLineMin = lineHeight * 3 + AxisLabelLineSpacing * 2
+    return if (rowHeight >= threeLineMin) {
+        GridAxisLabels(lineCount = 3, withStartTime = true)
+    } else {
+        GridAxisLabels(lineCount = 1, withStartTime = false)
+    }
+}
 
 /**
  * **一行 = 一节课**（1 / 2 / 3 / …；最后一行到第几节由**学校**的节次表决定 ——
@@ -204,26 +319,30 @@ private val CardInnerVerticalPadding = 8.dp
  * ```
  *
  * ## 三层结构，各管一件事
- *  - **时间轴为骨架**：左轴每一行**三行小字** = 开始时刻 / 第 N-M 节 / 结束时刻
- *    （如 `9:00` / `第1-2节` / `10:20`；横线是它的刻度）。拆三行是因为
+ *  - **时间轴为骨架**：左轴每一行最多**三行小字** = 开始时刻 / 第 N 节 / 结束时刻
+ *    （如 `9:00` / `第1节` / `9:40`；横线是它的刻度）。拆三行是因为
  *    `9:00~10:20` 这种区间写法在 40dp 出头的窄轴上会被省略号截断（"时间显示不全"）；
+ *    行高不够时**自动减行**（只留节次，见 [axisLabelsFor]）。
  *    卡片的纵向位置直接由节次决定，所以卡片上**不再写时间**（位置就是时间）；
  *  - **二维网格为容器**：一列一天（七列等宽铺满整屏，不横滚 —— 周视图要能一眼看全周）、
- *    **一行两节**（1-2 / 3-4 / …），`哪两节 × 星期几` 唯一确定一个格子；
+ *    **一行一节**（1 / 2 / 3 / …），`哪一节 × 星期几` 唯一确定一个格子；
  *  - **卡片为课程载体**：课程色块 + 课名 + 底部地点带，颜色走
  *    `CourseRepository.colorOfName(课名)`，与课表页/月历列表/圆点同色。
  *
- * ## 整周一眼看完：**不滚动**，行高跟着屏幕走
+ * ## 整周一眼看完：**任何地方都不滚动**，行高跟着屏幕走
  *
  * 调用方给 `weight(1f)`（高度有界），于是：
  *  - **行数**只算"整个学期真的排过课"的行（[gridRowCount]）：排到下午就是 5 行、有晚自习才 8 行；
- *    上限是**这所学校的块数**（默认 16 节 → 8 行，广工 12 节 → 6 行，见 `Timetable`）；
- *  - **行高** = 网格剩多少高 ÷ 行数（[GridBody] 量出来现算，36~88dp）。
+ *    上限是**这所学校的节数**（默认 16 节，广工 12 节，见 `Timetable`）；
+ *  - **行高** = 网格剩多少高 ÷ 行数（[gridRowHeight]，**只封上限 [MaxRowHeight]，没有下限**）。
  *
- * 两者相乘正好铺满那条高度，所以**看完这一周的七天不用上下滑**，
- * 卡片又能长到该长的大小（5 行时约 47×86dp、8 行时约 47×49dp；
- * 早先固定 8 行 × 68dp 时是 39×66dp，而且一屏放不下、必须滚）。
- * 只有"压到最小行高仍放不下"（小屏 / 超大字号）才让网格**自己内部滚**，页头与汇总条不动。
+ * ★ **"总高恒 ≤ 可用高度"是这条承诺的全部依据**（`GridRowHeightTest` 钉住）：
+ * 有下限时 `行数 × 下限` 会超过可用高度，就非得滚一下不可 —— 而周视图**没有**那条退路。
+ * 放不下时降级的是**骨架**（时间轴减行 [axisLabelsFor]、卡片退档 [gridCardTier]），
+ * 不是"多出来的部分滑一下就能看到"。
+ *
+ * 于是课表排到晚自习、或者广工那种 12 节，也是**一屏看完**；
+ * 卡片长到该长的大小（5 行时约 47×86dp；12 行时约 47×35dp 走最紧凑档）。
  *
  * ## 同一格里的多门课：叠着放，该显示的那张压在最前面
  *
@@ -268,8 +387,8 @@ private val CardInnerVerticalPadding = 8.dp
  *
  *  - **拖动刻度条**（[WeekSliderRow]）：跟手，落点即那一周；
  *  - **在网格上左右滑动**：往左滑到下一周、往右滑到上一周（门槛 56dp）。
- *    网格里没有横向滚动，所以横滑手势归换周用；纵向滑动归网格自己（只有放不下时才内部滚），
- *    两者不打架。
+ *    网格里既没有横向也没有**纵向**滚动（内容永远 ≤ 可视区，见 [gridRowHeight]），
+ *    所以横滑手势整个归换周用，不存在"纵向手势该归谁"的歧义。
  *
  * 两条路都只改 `selected`（并保留"选中了星期几"），画布不动 → 卡片就地亮/灰切换。
  *
@@ -288,7 +407,7 @@ private val CardInnerVerticalPadding = 8.dp
  * @param onCourseClick 点课程卡片 → 由 Fragment 打开课程详情浮层。
  *   参数是**那一天的全部课**（按节次排好）：详情卡列的是"那天有什么课"，不是"这一格是什么课"
  * @param modifier 调用方给 `weight(1f)`：**高度有界**是这个组件的前提 ——
- *   它按"还剩多少高 ÷ 行数"算行高，从而做到整周一眼看全、不用滚动
+ *   它按"还剩多少高 ÷ 行数"算行高（[gridRowHeight]），从而做到整周一眼看全、任何地方都不滚动
  */
 @Composable
 internal fun CalendarGridLayout(
@@ -675,13 +794,23 @@ private fun DayHeaderRow(
  * ## 三行**抱成一组**，整组落在这一行的竖直中线上
  *
  * 它**不参与任何滚动** —— 与右侧网格逐行对齐才有"刻度"的意义；行高由 [GridBody] 现算
- * （整屏自适应，36~88dp），所以三行**必须紧挨着**：行高多大，三个数都是一组的。
+ * （整屏自适应，见 [gridRowHeight]），所以三行**必须紧挨着**：行高多大，三个数都是一组的。
  *
  * 原来用 `SpaceBetween` 把三行摊在整行上（开始时刻贴行上沿、结束时刻贴行下沿，"像一把尺子"）：
  * 行高只有 36dp（小屏 / 晚自习 8 行）时确实像尺子，但行高按屏幕涨到 80dp 上下时，
  * 开始/结束时刻被推到这一行的上下两条网格线上，离中间那行「第N-M节」隔着大半行 ——
  * 三个数看着像三行不相干的字，谁是谁的都认不出来。
- * 现在整组居中，行高从 36dp 到 88dp 都长一个样。
+ * 现在整组居中，行高从 30dp 到 88dp 都长一个样。
+ *
+ * ## ★ 行高不够时**自动减行**（[GridAxisLabels]）
+ *
+ * 行高去掉下限之后，"节次多的学校 + 矮屏"会算出 30dp 上下一行 —— 三行 9sp 小字
+ * （行高 11sp）连字带行距正好塞不下。这时**不是让它溢出到相邻行**（相邻行是**别的节次**，
+ * 时间轴一溢出，"第几节在哪一行"这个刻度就整个乱了），而是按优先级减行：
+ * 先去掉起止时刻、只留节次（[GridAxisLabels.lineCount] == 1）。
+ *
+ * 优先丢掉时刻的理由：时刻是**可以没有的**（那个块还没收录作息时本来就是空的），
+ * 而且它可以从节次推出来；**节次不能丢** —— 它是这张网格的唯一坐标。
  *
  * 被点亮的那一行（点过课程卡片 / "现在"正在上的那一段）走强调色 + 加粗，
  * 于是"这门课落在哪一段"不用数格子。
@@ -689,16 +818,18 @@ private fun DayHeaderRow(
  * ## 没有时刻表的学校：只画中间那一行
  *
  * 某个块还没收录作息时（见 `Timetables.gdut`），开始/结束时刻是**空串**，
- * 这里就只画「第N-M节」—— 一根只有节次的刻度，也比一排编出来的时刻诚实
+ * 这里就只画「第N节」—— 一根只有节次的刻度，也比一排编出来的时刻诚实
  * （编出来的 9:00 会让人以为"这就是我的上课时间"）。
  *
  * @param metrics 轴宽 + 字号 + 中间那行的写法（[rememberAxisMetrics] 实测得到）
+ * @param labels 这一档画几行（[GridAxisLabels]：行高不够时起止时刻整行去掉）
  */
 @Composable
 private fun PeriodAxis(
     rowCount: Int,
     rowHeight: Dp,
     metrics: AxisMetrics,
+    labels: GridAxisLabels,
     highlightRow: Int?,
 ) {
     val tokens = LocalGlassTokens.current
@@ -712,16 +843,17 @@ private fun PeriodAxis(
                     .fillMaxWidth()
                     .padding(end = 4.dp),
                 horizontalAlignment = Alignment.End,
-                // 三行抱成一组、整组在这一行里居中（见 KDoc）：行高由屏幕现算，
+                // 整组在这一行里居中（见 KDoc）：行高由屏幕现算，
                 // 不能让行高一高就把开始/结束时刻甩到这一行两端的网格线上
                 verticalArrangement = Arrangement.Center,
             ) {
                 // ★ 时刻是**可以没有的**（那个块还没收录作息，见 Timetables.gdut）：
                 //   那就只画中间那一行「第N节」—— 宁可少一行，也不编一个时刻出来；
-                //   只剩一行时它照样在这一行里居中（排版由 verticalArrangement 管）
+                //   labels.start / labels.end 只是"这一档**允许**画时刻"，
+                //   文字本身还是从数据层拿，空串照样不画
                 val startTime = CourseRepository.timetable.startOfPeriod(period)
                 val endTime = CourseRepository.timetable.endOfPeriod(period)
-                if (startTime.isNotBlank()) {
+                if (labels.withStartTime && startTime.isNotBlank()) {
                     AxisLabel(
                         text = startTime,
                         metrics = metrics,
@@ -734,7 +866,7 @@ private fun PeriodAxis(
                     highlighted = highlighted,
                     emphasized = true,
                 )
-                if (endTime.isNotBlank()) {
+                if (labels.withStartTime && endTime.isNotBlank()) {
                     AxisLabel(
                         text = endTime,
                         metrics = metrics,
@@ -785,8 +917,9 @@ private fun AxisLabel(
  *
  *  - 课表只排到下午 → 5 行 → 每行能分到 80dp 上下，卡片是**又大又方正**的一张；
  *  - 课表排到晚自习 → 8 行 → 每行 50dp 上下，照样全在一屏里；
- *  - 屏幕太小（[MinRowHeight] 都放不下）→ 网格**自己内部滚动**，七列仍然一次看全，
- *    页头、滑块、汇总条不动。
+ *  - 节次多的学校（广工 12 行）→ 每行 35dp 上下：**照样一屏看完**，
+ *    骨架自己降级（时间轴减行、卡片退到最紧凑档），页头/滑块/说明条一动不动。
+ *    ★ 没有"压不下就内部滚"这条退路 —— 见 [gridRowHeight] 的 KDoc。
  *
  * @param axis 时间轴度量；[AxisMetrics.width] 同时决定表头"月份格"与网格左轴的宽度
  * @param tapped 点过的那张卡（天 + 网格行）；时间轴那一格与整行底色都跟着它亮
@@ -814,25 +947,24 @@ private fun GridBody(
     val nowTint = accent.copy(alpha = 0.07f)
     val tappedTint = accent.copy(alpha = 0.12f)
     val nowRow = nowMarker?.let { blockOf(it.period) }
+    val density = LocalDensity.current
 
     BoxWithConstraints(modifier.fillMaxWidth()) {
-        // 行高：整屏剩下的高度平分给每一行（上下限见 MinRowHeight / MaxRowHeight）。
-        // maxHeight 有界是调用方 weight(1f) 保证的；真无界（理论上不会）时退回下限，不让它崩
-        val rowHeight = if (maxHeight == Dp.Infinity) MinRowHeight
-        else (maxHeight / rowCount).coerceIn(MinRowHeight, MaxRowHeight)
+        // 行高 = 这一屏剩下的高度 ÷ 行数（算法与"为什么没有下限"见 [gridRowHeight]）。
+        // maxHeight 有界是调用方 weight(1f) 保证的
+        val rowHeight = gridRowHeight(availableHeight = maxHeight, rowCount = rowCount)
 
-        // 只有"压到最小行高还是放不下"才自己滚（小屏 / 超大字号）：七列仍然一眼看全。
-        // 滚动状态照常先建（不放在 if 里），免得条件分支上反而多一层可辨识性开销
-        val innerScroll = rememberScrollState()
-        val scrollable = rowHeight * rowCount > maxHeight
+        // ★ 这里**没有**内部滚动，也不该有：行高是"除以行数"得来的，
+        //   总高恒等于 rowHeight × rowCount ≤ maxHeight（见 gridRowHeight 的 KDoc 与
+        //   `GridRowHeightTest.总高恒不超出可用高度`）。原来那条
+        //   `if (rowHeight * rowCount > maxHeight) verticalScroll(...)` 的兜底
+        //   正是"手指往下滑屏幕会动"的来源，现在连可能性都不存在了
         Box(
-            Modifier
-                .fillMaxSize()
-                .then(if (scrollable) Modifier.verticalScroll(innerScroll) else Modifier),
+            Modifier.fillMaxSize(),
             // 行数很少、又被 MaxRowHeight 封了顶时，网格比槽位矮 —— 上下居中，
             // 免得"网格全挤在卡片上半截、下半截空着"看起来像漏画。
-            // 只在**不滚动**时居中（此时内容必然 ≤ 槽位，居中绝不会把内容顶出可视区）
-            contentAlignment = if (scrollable) Alignment.TopStart else Alignment.Center,
+            // 内容恒 ≤ 槽位，所以居中绝不会把内容顶出可视区
+            contentAlignment = Alignment.Center,
         ) {
             GridCanvas(
                 days = days,
@@ -840,6 +972,14 @@ private fun GridBody(
                 rowCount = rowCount,
                 rowHeight = rowHeight,
                 axis = axis,
+                // 行高不够时时间轴减行（只留节次）：见 PeriodAxis 的 KDoc。
+                // 在这里算一次、整根轴共用 —— 逐行各算各的会出现"上一行三行字、下一行一行字"。
+                // 量的是**当前档位的行高**（rememberAxisMetrics 实测出来的那份），
+                // 所以系统字号一调大，门槛跟着抬高，不会在大字号机器上把时刻挤到相邻节次里
+                axisLabels = axisLabelsFor(
+                    rowHeight = rowHeight,
+                    lineHeight = spToDp(density, axis.style.lineHeight),
+                ),
                 today = today,
                 selected = selected,
                 nowRow = nowRow,
@@ -880,6 +1020,7 @@ private fun GridCanvas(
     rowCount: Int,
     rowHeight: Dp,
     axis: AxisMetrics,
+    axisLabels: GridAxisLabels,
     today: LocalDate,
     selected: LocalDate,
     nowRow: Int?,
@@ -899,6 +1040,7 @@ private fun GridCanvas(
             rowCount = rowCount,
             rowHeight = rowHeight,
             metrics = axis,
+            labels = axisLabels,
             // 时间轴那一格跟着点过的**行**走（行号是网格行号，与 nowRow 同一套坐标）
             highlightRow = tapped?.row ?: nowRow,
         )
@@ -1062,8 +1204,9 @@ private fun DayColumn(
                                     row = gridRow + placed.startRow,
                                     dim = placed.card.dim,
                                 ),
-                                // 多行高的卡片（连上四节）不算"矮"，排版按格子本身多高来定
-                                compact = rowHeight * placed.span < CompactCardRowHeight,
+                                // 卡片实高 = 行高 × 跨几行（连上四节的实验卡片本来就该走宽松档）：
+                                // 排版档位由它定，与"屏幕多大"无关
+                                cardHeight = rowHeight * placed.span,
                                 modifier = Modifier
                                     .align(Alignment.TopStart)
                                     .offset(y = rowHeight * placed.startRow)
@@ -1083,15 +1226,16 @@ private fun DayColumn(
 }
 
 /**
- * 课名排版的两档字号与行高。
+ * 课名排版的三档字号与行高（哪一档由 [gridCardTier] 现算）。
  *
  * 七列平分屏幕后**卡片只有 45dp 上下宽**（1080p、393dp 宽的机器上量出来是 46dp），
  * 于是"一行放得下几个字"完全由字号决定：
  *
  * | 字号 | 一行放得下 | 说明 |
  * |---|---|---|
- * | 10sp | 3~4 个汉字 | 只用在这里：格子**高**（≥ [CompactCardRowHeight]）时，行数够，字号优先 |
- * | 8.5sp | 4~5 个汉字 | 格子矮时用：**宁可字小一档，也要把课名显示全** |
+ * | 10sp | 3~4 个汉字 | 卡片够高（放得下地点带）时用：行数够，字号优先 |
+ * | 8.5sp | 4~5 个汉字 | 地点带还在、但课名区被挤时用：**宁可字小一档，也要把课名显示全** |
+ * | 7.5sp | 5~6 个汉字 | 地点带整条撤掉后仍不够高时用（广工 12 行 / 超大字号的小屏）|
  *
  * 为什么矮格子要缩小字号：课名是这张卡唯一的信息（时间由位置表示、地点在底部小字里），
  * 而 `大学英语I（综合基础）`（11 字）、`中国近现代史纲要`（8 字）这类名字在 10sp 下
@@ -1102,6 +1246,11 @@ private val NameFontSize = 10.sp
 private val NameLineHeight = 12.sp
 private val CompactNameFontSize = 8.5.sp
 private val CompactNameLineHeight = 9.5.sp
+private val UltraNameFontSize = 7.5.sp
+private val UltraNameLineHeight = 8.5.sp
+
+/** 课名框的左右留白：两档共用（列宽是硬约束，这里能省则省）*/
+private val NameBoxHorizontalPadding = 2.dp
 
 /**
  * 课名框的上下留白：高格子留 3dp（字大，行间要透气）；矮格子**一点不留**。
@@ -1112,6 +1261,158 @@ private val CompactNameLineHeight = 9.5.sp
  */
 private val NameBoxVerticalPadding = 3.dp
 private val CompactNameBoxVerticalPadding = 0.dp
+
+/**
+ * 卡片底部地点带的字号与它的上下内边距（三档共用一份，判定与绘制都读它）。
+ *
+ * 地点比课名小一档是刻意的：课名是这张卡唯一的信息（时间由位置表示），
+ * 地点是补充；但地点**可以整条撤掉**（[GridCardTier.UltraCompact]），课名不行。
+ */
+private val RoomFontSize = 8.sp
+private val RoomLineHeight = 10.sp
+private val CompactRoomFontSize = 7.5.sp
+private val CompactRoomLineHeight = 9.sp
+private val UltraRoomFontSize = 7.sp
+private val UltraRoomLineHeight = 8.5.sp
+private val RoomBandVerticalPadding = 2.dp
+private val CompactRoomBandVerticalPadding = 1.dp
+private val UltraRoomBandVerticalPadding = 1.dp
+
+/**
+ * 课名区允许被压缩到的下限。
+ *
+ * 与 `ui/components/CampusComponents.kt` 那条"撤的是「时间 · 地点」整行，而不是挤三项"
+ * 是同一条口径：课名区不能被地点带挤到看不见。这个值是**下限**不是目标值 ——
+ * 正常格子里 `weight(1f)` 会把剩下的高度全给它。
+ */
+private val MinNameArea = 14.dp
+
+/**
+ * 卡片**还读得出来**的三档（`GridCardTierTest` 钉住）。
+ *
+ * 与 `ui/components/CampusComponents.kt` 的 `CourseCardTier` 是**两套**，不是重复：
+ * 那边是课表页那条列表（一行一张卡、卡片里还有「时间 · 地点」与节次行），
+ * 这里是周视图的格子（卡里只有课名 + 地点带）。合并成一套的话，
+ * 任何一边调门槛都会顺手改掉另一边的排版 —— 而周视图这边还多一档
+ * [UltraCompact]（撤地点带），课表页那边根本没有这一项可撤。
+ */
+internal enum class GridCardTier { Full, Compact, UltraCompact }
+
+/**
+ * 三档的字体度量与"地点带要不要画"。
+ *
+ * @param nameFont / nameLine 课名那一档的字号与行高（`sp`，由调用方按 `fontScale` 换算成 dp 再判定门槛）
+ * @param roomFont / roomLine 地点带的字号与行高；[GridCardTier.UltraCompact] 用不到（整条撤掉）
+ * @param roomBand 地点带要不要画
+ * @param roomPadding 地点带的上下内边距；不画地点带时为 0（那点高度全归课名区）
+ * @param nameBoxPadding 课名框的上下留白
+ */
+internal data class GridCardStyle(
+    val nameFont: TextUnit,
+    val nameLine: TextUnit,
+    val roomFont: TextUnit,
+    val roomLine: TextUnit,
+    val roomBand: Boolean,
+    val roomPadding: Dp,
+    val nameBoxPadding: Dp,
+)
+
+/** 各档的画法（与门槛判定共用同一批常量，两者因此不会漂移）*/
+internal fun gridCardStyle(tier: GridCardTier): GridCardStyle = when (tier) {
+    GridCardTier.Full -> GridCardStyle(
+        nameFont = NameFontSize,
+        nameLine = NameLineHeight,
+        roomFont = RoomFontSize,
+        roomLine = RoomLineHeight,
+        roomBand = true,
+        roomPadding = RoomBandVerticalPadding,
+        nameBoxPadding = NameBoxVerticalPadding,
+    )
+
+    GridCardTier.Compact -> GridCardStyle(
+        nameFont = CompactNameFontSize,
+        nameLine = CompactNameLineHeight,
+        roomFont = CompactRoomFontSize,
+        roomLine = CompactRoomLineHeight,
+        roomBand = true,
+        roomPadding = CompactRoomBandVerticalPadding,
+        nameBoxPadding = CompactNameBoxVerticalPadding,
+    )
+
+    GridCardTier.UltraCompact -> GridCardStyle(
+        nameFont = UltraNameFontSize,
+        nameLine = UltraNameLineHeight,
+        roomFont = UltraRoomFontSize,
+        roomLine = UltraRoomLineHeight,
+        roomBand = false,
+        roomPadding = UltraRoomBandVerticalPadding,
+        nameBoxPadding = CompactNameBoxVerticalPadding,
+    )
+}
+
+/**
+ * 这一档画出来最少要多高（课名框只算一行）。
+ *
+ * 行高低于它时不能停在"地点带画一半"上 —— 那是被裁掉的字，比少显示一行更糟。
+ */
+internal fun gridCardMinHeight(
+    style: GridCardStyle,
+    nameLineHeight: Dp,
+    roomLineHeight: Dp,
+): Dp {
+    val nameBand = nameLineHeight + style.nameBoxPadding * 2
+    val roomBand = if (style.roomBand) roomLineHeight + style.roomPadding * 2 else 0.dp
+    return nameBand + roomBand
+}
+
+/**
+ * 卡片该走哪一档（纯函数，`GridCardTierTest` 钉住）。
+ *
+ * ★ **永不裁字**是靠这里"先撤整项、再缩字号、最后才允许省略号"的顺序成立的：
+ *  1. 放得下**完整的**地点带（整行文字 + 它的上下留白）+ 一行课名 → 地点带照画；
+ *  2. 只放得下地点带、但课名区被挤到 [MinNameArea] 以下 → 仍画地点带，但课名收一档字号
+ *     （[GridCardTier.Compact]）—— 字号收一档正好换来"一行多放一个字"，
+ *     同时课名区**至少**留 [MinNameArea]，绝不出现"地点把课名挤没了"；
+ *  3. 连整条地点带都放不下 → [GridCardTier.UltraCompact]：**整条撤掉**
+ *     （不是画半行、也不是缩到看不见），省下的高度全给课名；
+ *  4. 课名框里画几行由 [nameLineCount] 现算，超长名字的省略号永远出现在框内 ——
+ *     这就是"截断只走省略号、不走卡片边缘"的那一处。
+ *
+ * @param cardHeight 卡片**实高**（`行高 × 这张卡跨几行`；连上四节的实验卡片本来就该走宽松档）
+ * @param nameLineHeight 宽松档一行课名的高度（已经过 `fontScale` 换算）
+ * @param roomLineHeight 地点带一行的高度（同上）
+ */
+internal fun gridCardTier(
+    cardHeight: Dp,
+    roomLineHeight: Dp,
+    nameLineHeight: Dp,
+): GridCardTier {
+    val full = gridCardMinHeight(gridCardStyle(GridCardTier.Full), nameLineHeight, roomLineHeight)
+    if (cardHeight >= full) return GridCardTier.Full
+
+    val compact = gridCardStyle(GridCardTier.Compact)
+    val roomBand = roomLineHeight + compact.roomPadding * 2
+    val nameArea = cardHeight - roomBand
+    return if (nameArea >= MinNameArea) GridCardTier.Compact else GridCardTier.UltraCompact
+}
+
+/**
+ * 地点带在某一档下的实高（含它的上下内边距）；不画地点带时为 0。
+ *
+ * 判定（[gridCardTier]）与绘制（[GridCourseCardBody] 的课名区高度）读的是同一个函数 ——
+ * 两处各算一遍迟早会不一致，表现就是"按 A 档留了位置、却按 B 档画了地点"。
+ */
+internal fun gridCardRoomBandHeight(style: GridCardStyle, roomLineHeight: Dp): Dp =
+    if (style.roomBand) roomLineHeight + style.roomPadding * 2 else 0.dp
+
+/**
+ * 把 sp 字行高换算成 dp（门槛判定必须跟 `fontScale` 走）。
+ *
+ * 与 `ui/components/CampusComponents.kt` 的 `courseCardRowBounds` 同一个理由：
+ * 门槛写死 dp 的话，系统字号一调大，"放得下"就变成"刚好放不下"，
+ * 表现是卡片下沿把最后一行字裁掉半截 —— 不崩，只是难看且丢信息。
+ */
+internal fun spToDp(density: Density, sp: TextUnit): Dp = with(density) { sp.toDp() }
 
 /**
  * 课名最多画几行。
@@ -1143,37 +1444,43 @@ internal fun nameLineCount(areaHeight: Dp, lineHeight: Dp): Int {
  * 时间**故意不写**：纵向位置就是时间轴上的位置，再写一遍「第3-4节」是噪音 ——
  * 要知道确切时间，点开课程详情浮层。
  *
- * ## 排版按"格子有多高"自适应（[compact] + 课名行数现算）
+ * ## 排版按"卡片有多高"自适应（[cardHeight] → [gridCardTier]）
  *
- * 行高是整屏自适应算出来的（[GridBody]），所以卡片有时只有 48dp 上下（8 行）、
- * 有时高到 86dp（4 行）。两处跟着变：
- *  - [compact]（格子 < [CompactCardRowHeight]）：课名与地点带各收一档字号、留白收紧；
- *    ★ 课名这一档收得比地点带更狠（10sp → 8.5sp）：卡片只有 45dp 宽，
- *      字号直接决定"一行放得下几个字"，矮格子里宁可字小也要把课名显示全；
- *  - **课名画几行**由课名框的实高现算（[nameLineCount]）—— **宁可少显示一行课名，
- *    也不能让地点被裁掉**：地点是"去哪儿上课"，课名看颜色和开头也认得出，
- *    裁掉地点就真的少信息了。课名区用 `weight(1f)` 先让位，地点带永远留在卡片底部。
+ * 行高由整屏自适应算出来（[gridRowHeight]），所以卡片有时只有 40dp 上下（广工 12 行）、
+ * 有时高到 88dp（3 行）。跟着变的有三样，顺序就是"先撤整项、再缩字号、最后省略号"：
+ *
+ *  1. **档位**（[GridCardTier]）：放不下整条地点带就**整条撤掉**（[gridCardTier]），
+ *     撤掉后省下的高度全归课名 —— 这是"永不裁字"最关键的一步，
+ *     因为"地点带画了一半"就是被卡片下沿切掉的字；
+ *  2. **字号**：10sp / 8.5sp / 7.5sp 三档。卡片只有 45dp 宽，字号直接决定
+ *     "一行放得下几个字"，矮格子里宁可字小也要把课名显示全；
+ *  3. **课名画几行**由课名框的实高现算（[nameLineCount]）—— 超长名字只在框内出现省略号。
+ *
+ * ★ 这一整套**没有任何动画**：档位是纯函数算出来的静态值，换周/换行数都不重播。
+ *   课表的"位置本身就是信息"（§2.5），整块位移或不必要的过渡一律不加。
  *
  * @param card [GridCard.dim] = true 的目标面貌是灰调（这一周不上）。**换周时不是瞬间换色**：
  *   底色 / 地点带 / 字色按 [rememberGridCardFace] 的进度一起插值，于是"亮↔灰"是淡入淡出，
  *   同一门课"这周亮、下周灰"是同一张卡片换个面貌，一眼可比
  * @param highlighted 被**点中的那一张**（判定见 [isTappedCard]）：加一圈强调色描边（和 X/Y 轴的点亮配套）。
  *   同节次的其他日期不算 —— 那是"选中一门课，别的日子也跟着亮"那个 bug
- * @param compact 格子矮（< [CompactCardRowHeight]）时的紧凑排版
+ * @param cardHeight 这张卡的实高（`行高 × 跨几行`）：档位由它定，与"屏幕多大"无关 ——
+ *   同一个行高在任何机器上都得到同一档
  */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun GridCourseCard(
     card: GridCard,
+    cardHeight: Dp,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
     highlighted: Boolean = false,
-    compact: Boolean = false,
 ) {
     val shape = RoundedCornerShape(8.dp)
     val entry = card.entry
     val accent = CourseRepository.colorOfName(entry.name)
     val tokens = LocalGlassTokens.current
+    val density = LocalDensity.current
     val interactionSource = remember { MutableInteractionSource() }
     val pressed by interactionSource.collectIsPressedAsState()
     val pressScale by animateFloatAsState(
@@ -1193,6 +1500,15 @@ private fun GridCourseCard(
         MaterialTheme.colorScheme.onSurface,
         face,
     )
+    // 档位门槛按**当前字体度量**算：fontScale 一调大，同一个行高就该往下退一档。
+    // 判定与绘制共用同一批 sp 常量（gridCardStyle），所以两者不会漂移
+    val tier = gridCardTier(
+        cardHeight = cardHeight,
+        roomLineHeight = spToDp(density, RoomLineHeight),
+        nameLineHeight = spToDp(density, NameLineHeight),
+    )
+    val style = gridCardStyle(tier)
+    val roomBandHeight = gridCardRoomBandHeight(style, spToDp(density, style.roomFont))
 
     Column(
         modifier = modifier
@@ -1212,29 +1528,65 @@ private fun GridCourseCard(
                 onClick = onClick,
             ),
     ) {
-        // 课名区**可以让位**（weight(1f)）：格子矮的时候少显示一行，也绝不把下面的地点挤掉
-        BoxWithConstraints(
+        // 课名区用 weight(1f) 吃掉"卡片高 − 地点带"：它**不参与任何动画**，
+        // 所以行数只随"这张卡多高"变，与换周无关
+        Box(Modifier.weight(1f)) {
+            GridCourseCardBody(
+                name = entry.name,
+                room = entry.room,
+                style = style,
+                textColor = textColor,
+                footerTint = footerTint,
+                cardHeight = cardHeight,
+                roomBandHeight = roomBandHeight,
+            )
+        }
+    }
+}
+
+/**
+ * 卡片内容：课名区（吃掉"卡片高 − 地点带"）+ 底部地点带。
+ *
+ * 拆出来是因为课名行数要在**课名框自己的高度**上现算（[nameLineCount]），
+ * 而那个高度 = `卡片高 − 地点带`：两个数都在这一个作用域里算，才不会各算各的。
+ *
+ * @param cardHeight 这张卡的实高
+ * @param roomBandHeight 地点带的实高；0 = 这一档不画地点带（[GridCardTier.UltraCompact]）
+ */
+@Composable
+private fun GridCourseCardBody(
+    name: String,
+    room: String,
+    style: GridCardStyle,
+    textColor: Color,
+    footerTint: Color,
+    cardHeight: Dp,
+    roomBandHeight: Dp,
+) {
+    val density = LocalDensity.current
+    // 行数按**这个框真有多高**算：框里放得下几行就画几行。
+    // 写死 maxLines 在格子矮时会把最后一行裁掉半截（比省略号更难看），
+    // 写死 1 行又浪费高格子 —— 所以让行数跟着格子走，这是"任何字号都不裁字"的那一处
+    val nameLines = nameLineCount(
+        areaHeight = (cardHeight - roomBandHeight).coerceAtLeast(0.dp),
+        lineHeight = spToDp(density, style.nameLine),
+    )
+
+    Column(Modifier.fillMaxSize()) {
+        Box(
             Modifier
                 .weight(1f)
                 .fillMaxWidth()
                 .padding(
-                    horizontal = 2.dp,
-                    vertical = if (compact) CompactNameBoxVerticalPadding else NameBoxVerticalPadding,
+                    horizontal = NameBoxHorizontalPadding,
+                    vertical = style.nameBoxPadding,
                 ),
             contentAlignment = Alignment.Center,
         ) {
-            val nameFontSize = if (compact) CompactNameFontSize else NameFontSize
-            val nameLineHeight = if (compact) CompactNameLineHeight else NameLineHeight
-            // 行数按**这个框真有多高**算：框里放得下几行就画几行。
-            // 写死 maxLines 在格子矮时会把最后一行裁掉半截（比省略号更难看），
-            // 写死 1 行又浪费高格子 —— 所以让行数跟着格子走，这是"任何字号都不裁字"的那一处
-            val nameLineHeightDp = with(LocalDensity.current) { nameLineHeight.toDp() }
-            val nameLines = nameLineCount(maxHeight, nameLineHeightDp)
-
             Text(
-                text = entry.name,
-                fontSize = nameFontSize,
-                lineHeight = nameLineHeight,
+                text = name,
+                fontSize = style.nameFont,
+                lineHeight = style.nameLine,
                 fontWeight = FontWeight.SemiBold,
                 textAlign = TextAlign.Center,
                 color = textColor,
@@ -1242,11 +1594,11 @@ private fun GridCourseCard(
                 overflow = TextOverflow.Ellipsis,
             )
         }
-        if (entry.room.isNotBlank()) {
+        if (style.roomBand && room.isNotBlank()) {
             Text(
-                text = entry.room,
-                fontSize = if (compact) 7.5.sp else 8.sp,
-                lineHeight = if (compact) 9.sp else 10.sp,
+                text = room,
+                fontSize = style.roomFont,
+                lineHeight = style.roomLine,
                 textAlign = TextAlign.Center,
                 color = textColor,
                 maxLines = 1,
@@ -1254,7 +1606,7 @@ private fun GridCourseCard(
                 modifier = Modifier
                     .fillMaxWidth()
                     .background(footerTint)
-                    .padding(horizontal = 2.dp, vertical = if (compact) 1.dp else 2.dp),
+                    .padding(horizontal = NameBoxHorizontalPadding, vertical = style.roomPadding),
             )
         }
     }

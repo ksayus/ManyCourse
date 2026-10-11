@@ -59,7 +59,17 @@
     <!--
       桌面小组件（2x2「下一节课」）。RemoteViews **不支持主题属性**（`?attr/colorSurface` 这类
       在桌面进程里解析不到），所以只能用固定色值 + `values-night` 同名覆盖来适配深色模式。
-      引用处：`res/drawable/widget_next_class_bg.xml` 与 `res/layout/widget_next_class.xml`。
+      引用处：`res/drawable/widget_next_class_bg.xml`、
+      `res/drawable/widget_next_class_bg_liquid.xml` 与 `res/layout/widget_next_class.xml`。
+
+      ★ 下面这一组 `widget_glass_*` 是**玻璃令牌的真实取值**，不是另编的一套
+      （来源 `ui/theme/GlassTokens.kt` 的 glassTokens()，这里是 `GlassMode.Gaussian`）：
+        · surface          ← barTint       白 52%（深色 #0F172A 62%）
+        · highlight_top/mid← highlight    白 14% → 2%（深色 6% → 2%）
+        · border           ← border       白 50%（深色 白 12%）；Liquid 为白 72% / 白 18%
+      为什么用 barTint 而不是 cardTint：小组件是**2x2 的大表面**（页头/底栏那一档），
+      卡片那一档（78% 白）是给列表里的重复项用的。Liquid 的那份在同名 drawable
+      `widget_next_class_bg_liquid.xml` 里给（同一命名口径），由 WidgetRefresh 按设置切换。
     -->
     <color name="widget_surface">#F2FFFFFF</color>
     <color name="widget_stroke">#1A0D47A1</color>
@@ -71,4 +81,21 @@
     <color name="widget_muted">#FF8A97A6</color>
     <!-- 例假/正在上课时状态行的强调色 -->
     <color name="widget_live">#FF2E7D32</color>
+
+    <!-- 玻璃令牌镜像（Gaussian × 浅色）：半透明底 + 顶部柔光 + 1dp 亮边 + 内侧同色系着色 -->
+    <color name="widget_glass_surface">#85FFFFFF</color>
+    <color name="widget_glass_highlight_top">#24FFFFFF</color>
+    <color name="widget_glass_highlight_mid">#05FFFFFF</color>
+    <color name="widget_glass_border">#80FFFFFF</color>
+    <!-- innerTint：CampusBlue600 的 5%（令牌 values.innerTintLight） -->
+    <color name="widget_glass_inner_tint">#0D1565C0</color>
+
+    <!-- 玻璃令牌镜像（Liquid × 浅色）：更通透的底、更强的高光与边缘光、加一层内阴影 -->
+    <color name="widget_glass_liquid_surface">#75FFFFFF</color>
+    <color name="widget_glass_liquid_highlight_top">#4DFFFFFF</color>
+    <color name="widget_glass_liquid_highlight_mid">#0FFFFFFF</color>
+    <color name="widget_glass_liquid_highlight_end">#05FFFFFF</color>
+    <color name="widget_glass_liquid_border">#99FFFFFF</color>
+    <color name="widget_glass_liquid_inner_shadow">#0D000000</color>
 </resources>
+

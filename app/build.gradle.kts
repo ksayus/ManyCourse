@@ -17,7 +17,7 @@ android {
         /**
          * 版本号可以用 Gradle 属性覆盖，CI 就是这么做的（见 `.github/workflows/android-ci.yml`）：
          * ```
-         *   -PversionName=1.5.0.3 -PversionCode=57
+         *   -PversionName=1.5.1.3 -PversionCode=57
          * ```
          * `versionName` 取 git tag、`versionCode` 取 GitHub run number ——
          * 这样每个 tag 产出的包版本号都不一样，不会出现"装不上、提示已安装更高版本"。
@@ -32,7 +32,7 @@ android {
         // 第二个版本位是小版本更新,比如添加功能,数字增加的量代表新功能的数量
         // 第三个版本位是Bug修复,以及软件优化,数字代表已经修复的Bug和优化功能的数量
         // 第四个版本位是支持的学校数量
-        versionName = providers.gradleProperty("versionName").orNull ?: "1.5.0.3"
+        versionName = providers.gradleProperty("versionName").orNull ?: "1.5.1.3"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }

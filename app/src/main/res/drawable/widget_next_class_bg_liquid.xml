@@ -1,0 +1,66 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  「下一节课」小组件底板 —— **液态玻璃档**（与 `widget_next_class_bg.xml` 同结构、更强的一档）。
+
+  两档的差别**不是**"换一套配色"，而是令牌里 `GlassMode.Liquid` 与 `Gaussian` 的差别：
+  高光更亮（白 30% 到 6%，对照高斯 14% 到 2%）、边缘光更亮（白 60%，对照 50%）、
+  内侧多一层黑 5% 的厚度（`innerShadow`）、底稍微通透一档（白 46%，对照 52%）。
+  取向也一样：**液态更强、高斯更克制**，与 App 里那两档观感一致。
+
+  ★ 与高斯那份一样：五层全部静态绘制，没有任何逐帧成本；真·背景模糊做不到，
+    原因写在 `widget_next_class_bg.xml` 与 `widget/WidgetRefresh.kt` 的注释里（平台边界）。
+-->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- ① 底：液态玻璃更通透（barTint 白 46% / 深色 #0F172A 58%） -->
+    <item>
+        <shape android:shape="rectangle">
+            <solid android:color="@color/widget_glass_liquid_surface" />
+            <corners android:radius="22dp" />
+        </shape>
+    </item>
+
+    <!-- ② 内侧同色系着色（innerTint，液态深色为 8%） -->
+    <item>
+        <shape android:shape="rectangle">
+            <solid android:color="@color/widget_glass_inner_tint" />
+            <corners android:radius="22dp" />
+        </shape>
+    </item>
+
+    <!-- ③ 内阴影（innerShadow，黑 5%）：玻璃"厚度"的来源。做不出真内阴影（那要模糊），
+         这里是同方向的极淡渐变，观感一致而成本是零 -->
+    <item>
+        <shape android:shape="rectangle">
+            <gradient
+                android:angle="270"
+                android:startColor="@color/widget_glass_liquid_inner_shadow"
+                android:endColor="@android:color/transparent"
+                android:type="linear" />
+            <corners android:radius="22dp" />
+        </shape>
+    </item>
+
+    <!-- ④ 顶部柔光（highlight，液态白 30% 到 6% 再到 2%）：自上而下（270），光从上方来 -->
+    <item>
+        <shape android:shape="rectangle">
+            <gradient
+                android:angle="270"
+                android:startColor="@color/widget_glass_liquid_highlight_top"
+                android:centerColor="@color/widget_glass_liquid_highlight_mid"
+                android:endColor="@color/widget_glass_liquid_highlight_end"
+                android:type="linear" />
+            <corners android:radius="22dp" />
+        </shape>
+    </item>
+
+    <!-- ⑤ 边缘光（edgeLight，白 60% / 深色白 22%）：液态玻璃的亮边比高斯更明显 -->
+    <item>
+        <shape android:shape="rectangle">
+            <stroke
+                android:width="1dp"
+                android:color="@color/widget_glass_liquid_border" />
+            <corners android:radius="22dp" />
+        </shape>
+    </item>
+</layer-list>

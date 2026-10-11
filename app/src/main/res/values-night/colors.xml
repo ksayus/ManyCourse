@@ -58,4 +58,25 @@
     <color name="widget_status">#FF60A5FA</color>
     <color name="widget_muted">#FF7A8798</color>
     <color name="widget_live">#FF4ADE80</color>
+
+    <!--
+      玻璃令牌镜像（Gaussian × 深色）：与 values/colors.xml 同结构、只换取值。
+      深色下的底与描边都要**弱一档**（令牌：barTint #0F172A 62%、highlight 白 6%、border 白 12%）——
+      深底上再叠一层白柔光会过曝，看着像"发光的方块"而不是玻璃。
+    -->
+    <color name="widget_glass_surface">#9E0F172A</color>
+    <color name="widget_glass_highlight_top">#0FFFFFFF</color>
+    <color name="widget_glass_highlight_mid">#05FFFFFF</color>
+    <color name="widget_glass_border">#1FFFFFFF</color>
+    <!-- innerTint：CampusBlue400 的 8%（令牌 values.innerTintDark） -->
+    <color name="widget_glass_inner_tint">#1442A5F5</color>
+
+    <!-- 玻璃令牌镜像（Liquid × 深色）：高光/边缘光同样弱一档（白 10% / 白 22%），内阴影加深到黑 10% -->
+    <color name="widget_glass_liquid_surface">#940F172A</color>
+    <color name="widget_glass_liquid_highlight_top">#1AFFFFFF</color>
+    <color name="widget_glass_liquid_highlight_mid">#08FFFFFF</color>
+    <color name="widget_glass_liquid_highlight_end">#05FFFFFF</color>
+    <color name="widget_glass_liquid_border">#38FFFFFF</color>
+    <color name="widget_glass_liquid_inner_shadow">#1A000000</color>
 </resources>
+

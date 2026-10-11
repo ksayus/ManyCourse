@@ -1,17 +1,78 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  小组件底板：圆角 + 1dp 描边。
+  「下一节课」小组件底板 —— **高斯模糊档**的液态玻璃观感（静态模拟）。
 
-  为什么不用 MaterialCardView / 主题属性：桌面小组件跑在**桌面的进程**里，
-  那里没有我们 App 的 Theme，`?attr/colorSurface` 这类主题属性解析不到（会直接崩或渲染成透明）。
-  所以这里只用 `@color/widget_*` 这种**固定色值**，深色模式靠 `values-night/colors.xml`
-  同名覆盖 —— 见 `values/colors.xml` 里那一段注释。
+  ## 为什么只能"模拟"，做不到真模糊
+
+  小组件跑在**启动器的进程**里、用 `RemoteViews` 渲染：它拿不到自己背后的内容
+  （壁纸是什么、底下压着哪个页面，它一概看不见），所以 Haze / `RenderEffect` 那种
+  **真·背景模糊在小组件里做不到** —— 这是平台边界，不是取舍。
+  能做到的是把 App 里玻璃的**观感**静态地画出来，四层各有出处：
+
+  ① solid               ← 令牌 barTint（半透明底）
+  ② 5% 品牌色           ← 令牌 innerTint（玻璃内侧的同色系着色）
+  ③ vertical gradient   ← 令牌 highlight（顶部柔光，方向 lightAngle = 90°，自上而下）
+  ④ stroke 1dp          ← 令牌 border（亮边）
+
+  ★ 四层都是**静态绘制**：一帧画一次就定住，不参与任何逐帧失效
+  （小组件本来也没有逐帧概念，§5 的性能清单不因此变化）。
+
+  ## 颜色从哪来
+
+  全部取 `ui/theme/GlassTokens.kt` 的**真实令牌取值**（Gaussian × 明暗），
+  见 `values/colors.xml` 里 `widget_glass_*` 那一段的对照表。
+  这里**刻意不用** `<color>` 的 `android:alpha`（API 24 才支持，而本应用 minSdk 更低）：
+  不透明度直接编码在色值的 alpha 通道里，效果相同且没有版本风险。
+
+  ## 高斯 vs 液态
+
+  本文件是**高斯模糊**档：更实的磨砂底、克制的柔光（白 14% 到 2%）、柔和的白 50% 描边。
+  液态玻璃那份在 `widget_next_class_bg_liquid.xml`（同名口径、更强的高光与边缘光），
+  由 `widget/WidgetRefresh.kt` 按 `UiSettings.glassMode` 切换。
 -->
-<shape xmlns:android="http://schemas.android.com/apk/res/android"
-    android:shape="rectangle">
-    <solid android:color="@color/widget_surface" />
-    <corners android:radius="22dp" />
-    <stroke
-        android:width="1dp"
-        android:color="@color/widget_stroke" />
-</shape>
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- ① 半透明底（barTint，高斯浅色：白 52%）。桌面壁纸会透上来，这就是"玻璃"的来源 -->
+    <item>
+        <shape android:shape="rectangle">
+            <solid android:color="@color/widget_glass_surface" />
+            <corners android:radius="22dp" />
+        </shape>
+    </item>
+
+    <!-- ② 内侧同色系着色（innerTint）：与 App 里 standalone 表面的那层是同一件事 -->
+    <item>
+        <shape android:shape="rectangle">
+            <solid android:color="@color/widget_glass_inner_tint" />
+            <corners android:radius="22dp" />
+        </shape>
+    </item>
+
+    <!--
+      ③ 顶部柔光：令牌 highlight 就是"自上而下"（lightAngle = 90°，与既有的
+         Brush.verticalGradient 等价）。`angle=270` 才是自上而下（90 = 自下而上），
+         这里取 270 复刻令牌的方向:高光必须在顶上，"玻璃被上方光源照着"才成立。
+    -->
+    <item>
+        <shape android:shape="rectangle">
+            <gradient
+                android:angle="270"
+                android:startColor="@color/widget_glass_highlight_top"
+                android:centerColor="@color/widget_glass_highlight_mid"
+                android:endColor="@android:color/transparent"
+                android:type="linear" />
+            <corners android:radius="22dp" />
+        </shape>
+    </item>
+
+    <!-- ④ 1dp 亮边（border）：单独一层、不与 solid 同层。solid+stroke 同层时 stroke 会以边界
+         为中心向外扩半条，在 22dp 圆角上表现为"边比圆角方一点" -->
+    <item>
+        <shape android:shape="rectangle">
+            <stroke
+                android:width="1dp"
+                android:color="@color/widget_glass_border" />
+            <corners android:radius="22dp" />
+        </shape>
+    </item>
+</layer-list>
