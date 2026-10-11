@@ -55,12 +55,17 @@ fun ManyCourseTheme(
     darkTheme: Boolean = isSystemInDarkTheme(),
     content: @Composable () -> Unit
 ) {
-    // 玻璃风格由全局设置驱动：切换后 mode 变化 → 令牌重算 → 全部组件重组生效（无需重启）
+    // 玻璃风格 + 配色都由全局设置驱动：任一变化 → 令牌重算 → 全部组件重组生效（无需重启）。
+    // 配色是"色相"维度、模式是"结构"维度，两者正交（见 GlassPalette 的 KDoc）。
     val glassMode = UiSettings.glassMode.value
-    val tokens = remember(glassMode, darkTheme) { glassTokens(glassMode, darkTheme) }
+    val glassPalette = UiSettings.glassPalette.value
+    val tokens = remember(glassMode, glassPalette, darkTheme) {
+        glassTokens(glassMode, darkTheme, glassPalette)
+    }
 
     CompositionLocalProvider(
         LocalGlassMode provides glassMode,
+        LocalGlassPalette provides glassPalette,
         LocalGlassTokens provides tokens,
     ) {
         MaterialTheme(

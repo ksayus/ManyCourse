@@ -4,6 +4,8 @@ import android.content.Context
 import android.content.SharedPreferences
 import androidx.compose.runtime.mutableStateOf
 import com.tof.manycourse.ui.theme.GlassMode
+import com.tof.manycourse.ui.theme.GlassPalette
+import kotlin.math.abs
 
 /**
  * UI 偏好持久化（SharedPreferences）。
@@ -16,7 +18,9 @@ object UiSettings {
 
     private const val PREFS_NAME = "manycourse_ui_prefs"
     private const val KEY_GLASS_MODE = "glass_mode"
+    private const val KEY_GLASS_PALETTE = "glass_palette"
     private const val KEY_NOTIFICATIONS = "notifications_enabled"
+    private const val KEY_LEAD_MINUTES = "reminder_lead_minutes"
     private const val KEY_CALENDAR_GRID = "calendar_grid_layout"
     private const val KEY_DIM_ON_HOLIDAYS = "dim_on_holidays"
     private const val KEY_DEV_MODE = "dev_mode"
@@ -29,8 +33,25 @@ object UiSettings {
     /** 当前玻璃风格；默认「高斯模糊」。Compose 观察此状态，切换后立即重组生效 */
     val glassMode = mutableStateOf(GlassMode.Default)
 
+    /**
+     * 当前**配色预设**；默认「校园蓝」（= 引入配色系统之前的全部取值）。
+     *
+     * 老用户的 prefs 里没有这个键，[GlassPalette.fromKey] 会回落到默认配色 ——
+     * 于是升级后看到的界面和升级前逐字段一致，不会"升个级颜色变了"。
+     */
+    val glassPalette = mutableStateOf(GlassPalette.Default)
+
     /** 课前提醒开关；默认开启 */
     val notificationsEnabled = mutableStateOf(true)
+
+    /**
+     * 课前**提前多少分钟**提醒（默认 [DefaultLeadMinutes]）。
+     *
+     * 取值只可能在 [LeadMinuteOptions] 里：读盘和落盘都过一遍 [coerceLeadMinutes]，
+     * 所以手改 prefs、或者以后调整档位列表，都不会让界面冒出"提前 0 分钟"
+     * 或"提前 999 分钟"这种值。
+     */
+    val leadMinutes = mutableStateOf(DefaultLeadMinutes)
 
     /**
      * **日历页布局**开关：
@@ -97,7 +118,10 @@ object UiSettings {
         val p = context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         prefs = p
         glassMode.value = GlassMode.fromKey(p.getString(KEY_GLASS_MODE, null))
+        glassPalette.value = GlassPalette.fromKey(p.getString(KEY_GLASS_PALETTE, null))
         notificationsEnabled.value = p.getBoolean(KEY_NOTIFICATIONS, true)
+        // 过一遍 coerce：手改过 prefs / 老版本留下的值都不会让提前量落在档位之外
+        leadMinutes.value = coerceLeadMinutes(p.getInt(KEY_LEAD_MINUTES, DefaultLeadMinutes))
         calendarGridLayout.value = p.getBoolean(KEY_CALENDAR_GRID, false)
         dimOnHolidays.value = p.getBoolean(KEY_DIM_ON_HOLIDAYS, true)
         devMode.value = p.getBoolean(KEY_DEV_MODE, false)
@@ -113,11 +137,32 @@ object UiSettings {
         prefs?.edit()?.putString(KEY_GLASS_MODE, value.key)?.apply()
     }
 
+    /**
+     * 切换**配色预设**并持久化。
+     *
+     * 与 [setGlassMode] 同构：不重启、不二次确认 —— 令牌一变，
+     * 所有读 `LocalGlassTokens` 的组件当场重组，背景光斑也跟着换色
+     * （光斑颜色已收进令牌层，这也是它能"立即生效"的前提）。
+     */
+    fun setGlassPalette(value: GlassPalette) {
+        if (glassPalette.value == value) return
+        glassPalette.value = value
+        prefs?.edit()?.putString(KEY_GLASS_PALETTE, value.key)?.apply()
+    }
+
     /** 课前提醒开关，持久化 */
     fun setNotificationsEnabled(enabled: Boolean) {
         if (notificationsEnabled.value == enabled) return
         notificationsEnabled.value = enabled
         prefs?.edit()?.putBoolean(KEY_NOTIFICATIONS, enabled)?.apply()
+    }
+
+    /** 课前提醒的提前量（分钟），持久化；非法值一律夹到最近的档位（见 [coerceLeadMinutes]）*/
+    fun setLeadMinutes(minutes: Int) {
+        val safe = coerceLeadMinutes(minutes)
+        if (leadMinutes.value == safe) return
+        leadMinutes.value = safe
+        prefs?.edit()?.putInt(KEY_LEAD_MINUTES, safe)?.apply()
     }
 
     /** 日历页布局切换（日程网格 / 月历列表），持久化 */
@@ -161,3 +206,30 @@ object UiSettings {
         prefs?.edit()?.putLong(KEY_LAST_UPDATE_CHECK, millis)?.apply()
     }
 }
+
+/**
+ * 课前提醒可选的提前量档位（分钟）。
+ *
+ * 为什么是**固定档位**而不是让用户随便填一个数：
+ *  - "提前 7 分钟"和"提前 8 分钟"对用户没有任何区别，但会让设置页多出一个输入框、
+ *    一个校验分支、和一种"填错了怎么办"的失败模式；
+ *  - 档位列表本身也是**校验依据**（[coerceLeadMinutes] 靠它夹取），
+ *    开放自由输入就没有这个依据了。
+ */
+val LeadMinuteOptions: List<Int> = listOf(5, 10, 15, 20, 30)
+
+/** 默认提前量：课前 15 分钟（设置页原本那句"课前 15 分钟推送提醒"说的就是这个数）*/
+const val DefaultLeadMinutes: Int = 15
+
+/**
+ * 把任意整数夹到**最近的合法档位**上。
+ *
+ * 为什么必须有这一步：这个值要在 SharedPreferences 里跨版本存活。
+ * 有人手改 prefs、以后调整档位列表、或者从别的版本升上来，都可能读出一个档位之外的值。
+ * 读出 `0` 的后果不是崩溃，而是**"课前 0 分钟提醒"**——课都开始了我才通知你，等于没通知，
+ * 而且界面上看不出来哪里坏了。所以**读盘和落盘都过一遍这个函数**。
+ *
+ * 取"最近的档位"而不是一刀切到最小/最大：用户填 22 显然想要 20 那一档。
+ */
+fun coerceLeadMinutes(minutes: Int): Int =
+    LeadMinuteOptions.minByOrNull { abs(it.toLong() - minutes.toLong()) } ?: DefaultLeadMinutes

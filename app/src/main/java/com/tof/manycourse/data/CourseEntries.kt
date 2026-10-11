@@ -121,6 +121,8 @@ fun coursesOfDate(date: LocalDate): List<CourseEntry>? {
         // 本地课表：整学期的课按星期几循环，只在"本周"允许兜底
         localCourses = CourseRepository.coursesOn(date),
         allowLocalFallback = date in naturalWeekOf(LocalDate.now()),
+        // 这一天落在第几教学周（null = 没有教学周数据 → 不按周次筛，见 buildDayEntries）
+        week = WeekScheduleStore.weekOf(date)?.index,
     )
 }
 
@@ -208,6 +210,7 @@ internal fun countWeekCourses(
  * @param ownCourses  用户自己在 App 里加的课（调用方已按当天筛过）
  * @param localCourses 本地课表里当天的课（调用方已按当天筛过）
  * @param allowLocalFallback 这一天允不允许用本地课表兜底（= 含今天的那一个自然周）
+ * @param week 这一天落在第几教学周；**null = 不知道**（没有教学周数据）
  * @return null = 没有任何可用数据（调用方显示"暂无课表数据"）；空表 = 有数据但那天没课
  */
 internal fun buildDayEntries(
@@ -215,16 +218,26 @@ internal fun buildDayEntries(
     ownCourses: List<Course>,
     localCourses: List<Course>,
     allowLocalFallback: Boolean,
+    week: Int? = null,
 ): List<CourseEntry>? {
     val own = ownCourses.sortedBy { it.startPeriod }.map { CourseEntry.Local(it) }
 
     if (weekCourses != null) {
-        // 教务系统的课在前（它是权威数据），用户自己加的课跟在后面
+        // ★ 服务端按周返回的课**已经筛过"这一周真的会上"**了，不要再按周次串筛第二遍：
+        //   多筛一道只会在服务端与我们的解析口径不一致时把课吃掉。
         return weekCourses.sortedBy { it.startPeriod }.map { CourseEntry.Week(it) } + own
     }
 
     if (!allowLocalFallback) return null
-    return localCourses.sortedBy { it.startPeriod }.map { CourseEntry.Local(it) }
+
+    // ★ **本地兜底这条路必须自己按周次串筛**：本地是"整学期课表 + 一个周次串"，
+    //   不筛的话"只在第 2-4 周上的军训"会被画满整个学期（周次串在这之前只展示、不参与渲染）。
+    //   week 为 null（不知道这是第几周）或周次串认不出 → `appliesInWeek` 一律返回 true，
+    //   也就是**照旧显示**：宁可多列一门，也不能猜着把一门真会上的课藏掉。
+    return localCourses
+        .filter { it.appliesInWeek(week) }
+        .sortedBy { it.startPeriod }
+        .map { CourseEntry.Local(it) }
 }
 
 /**
@@ -232,7 +245,7 @@ internal fun buildDayEntries(
  *
  * ## 全都没有时刻时返回 null（**整块停用**）
  *
- * 这所学校还没拿到准确作息时（如广工，见 [Timetables.gdut]），每门课的 [CourseEntry.startTime]
+ * 这个块还没收录作息时（见 [Timetable.Block]），每门课的 [CourseEntry.startTime]
  * 都是空串 —— 那种情况下**一门都不该高亮**：
  *  - 若沿用"解析不出时刻就当它是下一门"的兜底，第一门课会**永远**亮着（看着像"下一节就是它"），
  *    那是在说一件我们并不知道的事；

@@ -8,6 +8,8 @@ import com.tof.manycourse.data.SessionStore
 import com.tof.manycourse.data.UiSettings
 import com.tof.manycourse.data.WifiFingerprintStore
 import com.tof.manycourse.data.ScheduleCache
+import com.tof.manycourse.reminder.ClassReminderScheduler
+import com.tof.manycourse.widget.WidgetRefresh
 
 /**
  * 应用入口：在任何 Activity 之前恢复偏好与登录会话 ——
@@ -39,5 +41,14 @@ class ManyCourseApp : Application() {
         //   全靠这里读盘，所以「我的」页照样是对的。
         ProfileRepository.bindAccount(SessionStore.schoolId.value, SessionStore.account.value)
         ScheduleCache.prime(SessionStore.schoolId.value, SessionStore.account.value)
+
+        // ★ 课前提醒与桌面小组件都放在**最后**：它们读的正是上面刚灌好的那几个仓库
+        //   （ScheduleCache / WeekScheduleStore / CourseRepository），早一步就是读空。
+        //
+        //   放在 Application.onCreate 还有个更重要的理由：这是**唯一每次启动进程都一定会走到**
+        //   的地方。闹钟被系统清掉（重启、省电策略杀掉、覆盖安装）之后，
+        //   用户只要打开一次 App 就恢复了 —— 其它几个重排时机（开机广播等）都可能被 OEM 拦掉。
+        ClassReminderScheduler.reschedule(this)
+        WidgetRefresh.updateAll(this)
     }
 }

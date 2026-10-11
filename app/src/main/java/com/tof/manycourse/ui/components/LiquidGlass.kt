@@ -35,6 +35,7 @@ import com.tof.manycourse.ui.theme.GlassEdge
 import com.tof.manycourse.ui.theme.GlassLevel
 import com.tof.manycourse.ui.theme.GlassTokens
 import com.tof.manycourse.ui.theme.LocalGlassTokens
+import com.tof.manycourse.ui.theme.blobAlphas
 import kotlinx.coroutines.launch
 import kotlin.math.cos
 import kotlin.math.roundToInt
@@ -98,7 +99,7 @@ fun LiquidGlassBackground(modifier: Modifier = Modifier, animate: Boolean = true
                 )
             )
     ) {
-        // 蓝色光斑：绕左上区域轨道运动 + 呼吸
+        // 第一个轨道光斑（左上区域）：轨道运动 + 呼吸。颜色来自 tokens.blobColors[0]
         // 所有运动均在绘制阶段（graphicsLayer）完成，避免每帧重新布局，保证流畅
         Box(
             Modifier
@@ -112,17 +113,9 @@ fun LiquidGlassBackground(modifier: Modifier = Modifier, animate: Boolean = true
                     scaleX = pulse1Q
                     scaleY = pulse1Q
                 }
-                .background(
-                    Brush.radialGradient(
-                        colors = listOf(
-                            Color(0x4D90CAF9).scaleAlpha(blobScale),
-                            Color(0x1A90CAF9).scaleAlpha(blobScale),
-                            Color(0x0090CAF9),
-                        ),
-                    )
-                )
+                .background(blobBrush(tokens, index = 0, scale = blobScale))
         )
-        // 紫色光斑：绕右下区域轨道运动（相位相反）+ 呼吸
+        // 第二个轨道光斑（右下区域，相位相反）：颜色来自 tokens.blobColors[1]
         Box(
             Modifier
                 .align(androidx.compose.ui.Alignment.BottomEnd)
@@ -135,17 +128,9 @@ fun LiquidGlassBackground(modifier: Modifier = Modifier, animate: Boolean = true
                     scaleX = pulse2Q
                     scaleY = pulse2Q
                 }
-                .background(
-                    Brush.radialGradient(
-                        colors = listOf(
-                            Color(0x4DCE93D8).scaleAlpha(blobScale),
-                            Color(0x1ACE93D8).scaleAlpha(blobScale),
-                            Color(0x00CE93D8),
-                        ),
-                    )
-                )
+                .background(blobBrush(tokens, index = 1, scale = blobScale))
         )
-        // 天蓝光斑：中部偏右，小半径快速环绕 + 明显呼吸
+        // 第三个光斑：中部偏右，小半径快速环绕 + 明显呼吸；色感最淡（见 blobAlphas）
         Box(
             Modifier
                 .align(androidx.compose.ui.Alignment.CenterEnd)
@@ -158,17 +143,27 @@ fun LiquidGlassBackground(modifier: Modifier = Modifier, animate: Boolean = true
                     scaleX = pulse3Q
                     scaleY = pulse3Q
                 }
-                .background(
-                    Brush.radialGradient(
-                        colors = listOf(
-                            Color(0x407DD3FC).scaleAlpha(blobScale),
-                            Color(0x157DD3FC).scaleAlpha(blobScale),
-                            Color(0x007DD3FC),
-                        ),
-                    )
-                )
+                .background(blobBrush(tokens, index = 2, scale = blobScale))
         )
     }
+}
+
+/**
+ * 一个背景光斑的径向渐变：**色相来自令牌层，浓淡来自令牌层**，渲染层只负责拼装。
+ *
+ * 这里刻意不出现任何颜色字面量：光斑颜色原本写死在这个函数体里，
+ * 于是"换配色"换不动背景 —— 页面背景变绿了、光斑还是蓝的，配色功能等于没生效。
+ * 现在它和别的样式值走同一条路（改样式只改 GlassTokens）。
+ *
+ * @param index 第几个光斑（0/1 轨道光斑、2 中部小光斑）
+ * @param scale [GlassTokens.blobAlphaScale]：高斯模糊模式整体收敛光斑色感
+ */
+private fun blobBrush(tokens: GlassTokens, index: Int, scale: Float): Brush {
+    val hue = tokens.blobColors[index]
+    val alphas = blobAlphas(index)
+    return Brush.radialGradient(
+        colors = alphas.map { hue.copy(alpha = it * scale) },
+    )
 }
 
 /**
@@ -221,8 +216,11 @@ fun Modifier.liquidGlass(
         .glassOverlays(
             tokens = tokens,
             shape = shape,
+            // 页头/底栏贴屏幕物理边缘：不画整圈描边、不吃内阴影/色感纱（见 glassOverlays 的 standalone）
             standalone = usesFullBorder(level),
             separatorEdge = separatorEdge,
+            // ★ 泛光在这里是开的：页头/底栏正是"一屏一块的大表面"（作用面规则见 softBloom）
+            bloomEnabled = true,
         )
 }
 
@@ -238,6 +236,9 @@ fun Modifier.glassSurface(
     shape = shape,
     tint = if (highlighted) LocalGlassTokens.current.cardTintHighlighted else LocalGlassTokens.current.cardTint,
     elevation = LocalGlassTokens.current.cardShadow,
+    // ★ 卡片不画泛光：它是滚动容器里的重复项，逐张加一层绘制就是滚动时的实打实开销
+    // （详见 softBloom 的"作用面"说明）
+    bloomEnabled = false,
 )
 
 /**
@@ -246,6 +247,8 @@ fun Modifier.glassSurface(
  * 不透明度更高（浅色 78%–84% 白 / 深色 80%–85% 深灰）+ 1dp 描边 + 阴影分层，
  * 正文对比度有保证；同时因为这些面板会做进出场缩放/淡入，
  * 用静态表面可以彻底避免实时模糊在动画图层里重采样造成的闪帧。
+ *
+ * 泛光在这里**打开**：浮层面板一屏只有一块，属于"大表面"（与页头/底栏同档）。
  */
 @Composable
 fun Modifier.glassPanel(
@@ -254,6 +257,7 @@ fun Modifier.glassPanel(
     shape = shape,
     tint = LocalGlassTokens.current.panelTint,
     elevation = LocalGlassTokens.current.panelShadow,
+    bloomEnabled = true,
 )
 
 /** 静态玻璃表面的公共实现：阴影 + 裁剪 + 底色 + 统一叠加层 */
@@ -262,6 +266,7 @@ private fun Modifier.glassStatic(
     shape: Shape,
     tint: Color,
     elevation: Dp,
+    bloomEnabled: Boolean,
 ): Modifier {
     val tokens = LocalGlassTokens.current
     return this
@@ -280,6 +285,7 @@ private fun Modifier.glassStatic(
             shape = shape,
             standalone = true,
             separatorEdge = GlassEdge.None,
+            bloomEnabled = bloomEnabled,
         )
 }
 
@@ -287,28 +293,41 @@ private fun Modifier.glassStatic(
 private fun usesFullBorder(level: GlassLevel): Boolean = level == GlassLevel.Panel
 
 /**
- * 色感层 + 顶部高光 + 描边/分隔线 + 内阴影 + 边缘光：两种模式视觉差异的唯一实现点。
+ * 色感层 + 内侧同色系着色 + 顶部高光 + 描边/分隔线 + 内阴影 + 边缘光：
+ * 两种模式 / 六套配色视觉差异的唯一实现点。
  *
- * @param standalone 是否是"独立的玻璃表面"（面板、卡片：四周都远离屏幕边缘）。
- *   只有这类表面才画整圈描边、顶边反光、底部内阴影与色感纱层。
- *   页头/底栏不是：贴屏幕边缘画线会被圆角切断，而内阴影/色感纱会把整条压暗，
+ * @param standalone 是否是"独立的玻璃表面"（四周都远离屏幕边缘）：
+ *   只有这类表面才画整圈描边、顶边反光、底部内阴影、色感纱层与内侧着色。
+ *   页头/底栏不是 —— 贴屏幕边缘画线会被圆角切断，而内阴影/色感纱会把整条压暗，
  *   让"顶部"看起来沉在内容下面（要求是浮在内容之上）。
+ * @param bloomEnabled 是否画静态柔光泛光。与 [standalone] 分开传是**故意的**：
+ *   列表卡片和浮层面板都是"独立表面"，但卡片绝不能画泛光
+ *   （见 [Modifier.softBloom] 的"作用面"说明）—— 合成一个参数就表达不出这个区别，
+ *   下一个人把两者合并时，就会顺手让所有卡片都长出一层逐帧绘制。
  */
 private fun Modifier.glassOverlays(
     tokens: GlassTokens,
     shape: Shape,
     standalone: Boolean,
     separatorEdge: GlassEdge,
+    bloomEnabled: Boolean,
 ): Modifier = this
     // saturation：>1 叠加品牌色增强色彩，<1 叠加中性灰收敛（面板/卡片的色感差异）
     .then(
         if (standalone) Modifier.background(tokens.saturationOverlay) else Modifier
     )
-    // highlight：顶部柔光高光（液态玻璃更强；页头也有，帮助"上层"的观感）
-    .background(Brush.verticalGradient(tokens.highlight))
+    // innerTint：玻璃内侧的**同色系**染色（与黑色的 innerShadow 是两回事 ——
+    // 那个是"厚度"，这个是"这块玻璃被染成了哪一色"）
+    .then(
+        if (standalone) Modifier.background(tokens.innerTint) else Modifier
+    )
+    // highlight：顶部柔光高光（液态玻璃更强；页头也有，帮助"上层"的观感）。
+    // 方向由 lightAngle 定，默认 90° = 自上而下，与原 verticalGradient 的取样等价
+    .background(highlightBrush(tokens))
     .then(
         if (standalone) Modifier.border(tokens.borderWidth, tokens.border, shape) else Modifier
     )
+    .softBloom(tokens, bloomEnabled)
     .drawWithContent {
         drawContent()
         val lineWidth = tokens.borderWidth.toPx()
@@ -351,8 +370,62 @@ private fun Modifier.glassOverlays(
         }
     }
 
-private fun Color.scaleAlpha(factor: Float): Color =
-    copy(alpha = (alpha * factor).coerceIn(0f, 1f))
+/**
+ * [GlassTokens.highlight] 的定向线性渐变。
+ *
+ * 默认角度 [HighlightAngleVertical]（90°）等价于原先的 `Brush.verticalGradient(highlight)`——
+ * 换成 `linearGradient` 只是为了把"光从哪个方向来"变成**可调令牌**，
+ * 而不是把方向写死在渲染层（那正是这次要消灭的那类分层违规）。
+ * 起点给 `Offset.Zero`、终点给单位方向向量，两端由 Compose 自动铺满整个绘制区。
+ */
+private fun highlightBrush(tokens: GlassTokens): Brush {
+    val radians = Math.toRadians(tokens.lightAngle.toDouble())
+    val direction = Offset(cos(radians).toFloat(), sin(radians).toFloat())
+    return Brush.linearGradient(
+        colors = tokens.highlight,
+        start = Offset.Zero,
+        end = direction,
+    )
+}
+
+/**
+ * **静态柔光泛光**：玻璃外沿下方一层由内到外淡出的径向渐变。
+ *
+ * ## 为什么是静态的
+ *
+ * 真泛光（跟着触摸 / 跟着视角动）要逐帧重算，与架构指南 §5 性能清单冲突，本轮明确否决。
+ * 这里画的是**一帧就定住**的一层渐变，成本等同多一次 `drawRect`。
+ *
+ * ## ★ 作用面（钉死）：只画在页头 / 底栏 / 浮层面板这三类"大表面"上
+ *
+ * 泛光是**每帧都要重画**的一层绘制，不是"算一次存起来的位图"。上面那三类表面一屏各只有一块，
+ * 多一次绘制无所谓；而 `GlassCard` / `CourseCard` 是**滚动容器里的重复项** ——
+ * 一屏几十张、每滚一帧全部重画，给它们逐张加一次绘制就是实打实的滚动开销，
+ * 违反 R7「列表/滚动场景不用重手段」的精神。所以调用方必须显式传 [bloomEnabled]：
+ * `glassSurface`（卡片）传 false，`glassPanel`（浮层面板）与 `liquidGlass`（页头/底栏）传 true。
+ *
+ * ## 几何
+ *
+ * 圆心落在**底边**中点：泛光从玻璃下沿往外扩散，于是它只出现在下方边缘附近，
+ * 而不是罩住整块玻璃把正文洗淡。
+ */
+private fun Modifier.softBloom(tokens: GlassTokens, bloomEnabled: Boolean): Modifier {
+    if (!bloomEnabled || tokens.bloom.none { it.alpha > 0.001f }) return this
+    return this.drawWithContent {
+        drawContent()
+        drawRect(
+            brush = Brush.radialGradient(
+                colors = tokens.bloom,
+                center = Offset(size.width / 2f, size.height),
+                radius = (size.maxDimension * BloomRadiusFactor).coerceAtLeast(1f),
+            ),
+            alpha = BloomAlpha,
+        )
+    }
+}
+
+private const val BloomRadiusFactor = 0.7f
+private const val BloomAlpha = 0.9f
 
 /**
  * 液态玻璃背景的**共享相位**（进程级唯一）。

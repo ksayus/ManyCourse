@@ -55,4 +55,20 @@
     <!-- 学校下拉弹窗：弹窗是独立 Window，衬在页面渐变上，必须接近不透明才看得清 -->
     <color name="login_dropdown_bg">#F7FFFFFF</color>
     <color name="login_dropdown_stroke">#331976D2</color>
+
+    <!--
+      桌面小组件（2x2「下一节课」）。RemoteViews **不支持主题属性**（`?attr/colorSurface` 这类
+      在桌面进程里解析不到），所以只能用固定色值 + `values-night` 同名覆盖来适配深色模式。
+      引用处：`res/drawable/widget_next_class_bg.xml` 与 `res/layout/widget_next_class.xml`。
+    -->
+    <color name="widget_surface">#F2FFFFFF</color>
+    <color name="widget_stroke">#1A0D47A1</color>
+    <color name="widget_label">#FF5B6B7F</color>
+    <color name="widget_name">#FF0D1B2A</color>
+    <color name="widget_meta">#FF44566C</color>
+    <color name="widget_room">#FF2E6DB4</color>
+    <color name="widget_status">#FF1E88E5</color>
+    <color name="widget_muted">#FF8A97A6</color>
+    <!-- 例假/正在上课时状态行的强调色 -->
+    <color name="widget_live">#FF2E7D32</color>
 </resources>

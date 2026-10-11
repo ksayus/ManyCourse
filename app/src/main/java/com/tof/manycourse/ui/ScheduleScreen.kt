@@ -1,8 +1,13 @@
 package com.tof.manycourse.ui
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.EnterTransition
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.slideInVertically
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -28,7 +33,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import dev.chrisbanes.haze.HazeState
@@ -49,6 +56,7 @@ import com.tof.manycourse.data.formatCacheTime
 import com.tof.manycourse.ui.components.CampusButton
 import com.tof.manycourse.ui.components.CampusChip
 import com.tof.manycourse.ui.components.CourseCard
+import com.tof.manycourse.ui.components.courseCardRowBounds
 import com.tof.manycourse.ui.theme.LocalGlassTokens
 import java.time.LocalDate
 import java.time.LocalTime
@@ -71,11 +79,22 @@ import java.time.LocalTime
  * 走的入口是 [DataRefresh]：它强制联网重拉（绕开 6 小时缓存与"已经同步过"两道判断）。
  * 页头也有一个刷新按钮（见 `RefreshButton`）—— 下拉是手势，按钮是"一定能点到"的那条路。
  *
+ * ## 整屏不滚动
+ *
+ * 这一页**不做整页滚动**：固定信息（下拉提示 / 星期 / 状态条 / 周次 / 节假日 / 门数）
+ * 与「添加课程」按钮各占各的高度，中间那一条全部给课程卡片，卡片区再按"当天有几门课"
+ * 把高度平分给每一行（见 [DayCourseList]）。只有"压到最小行高仍放不下"时才让卡片区
+ * 自己内部滚 —— 与日历页周视图同一个口径。
+ *
+ * ★ 这里**只算高度，不加任何动效**：课表的位置本身就是信息（架构指南 §2.5）。
+ *
  * @param onAddCourse 点「添加课程」（参数 = 预选的星期几）
  * @param onCourseClick 点某张课程卡片 → 由 Fragment 打开课程详情浮层。
  *   参数是**那一天的全部课**（按节次排）：详情卡列的是"那天有什么课"，不是"点中的那一门"。
  *   **浮层不在这里组合**：本页的内容区被页头和底栏夹在中间，浮层挂在这里的话
  *   遮罩只能盖住中间那一段（页头/底栏还亮着），和「添加课程」的全屏浮层对不上。
+ * @param onEditCourse 长按课程卡片 → 选「编辑」→ 由 Fragment 打开「编辑课程」浮层。
+ *   和「添加课程」共用同一个面板（`AddCourseScreen(editing = …)`），所以这里只往上抛意图。
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -83,11 +102,13 @@ fun ScheduleScreen(
     hazeState: HazeState,
     onAddCourse: (Int) -> Unit,
     onCourseClick: (LocalDate, List<CourseEntry>) -> Unit,
+    onEditCourse: (Course) -> Unit,
 ) {
     val today = LocalDate.now()
     val todayWeekday = today.dayOfWeek.value // 1=周一
     var selectedDay by remember { mutableIntStateOf(todayWeekday) }
-    var pendingDelete by remember { mutableStateOf<Course?>(null) }
+    // 长按卡片弹出的操作（编辑 / 删除）—— 以前只支持删除，所以原来叫 pendingDelete
+    var pendingAction by remember { mutableStateOf<Course?>(null) }
 
     // 教学周列表可能比课表晚到（两条链路并行）；到齐了就把"本周"的课补拉一次。
     // ensureWeek 对已缓存/在飞的周次是空操作，可以放心调。
@@ -117,7 +138,9 @@ fun ScheduleScreen(
             Column(
                 Modifier
                     .fillMaxSize()
-                    .verticalScroll(rememberScrollState())
+                    // ★ 这一层**没有** verticalScroll：整页要一屏显示完（见 [DayCourseList]）。
+                    //   下拉刷新不受影响 —— 滚动容器挪到了卡片区（那里带着它），
+                    //   PullToRefreshBox 靠的正是子级滚动容器的嵌套滚动事件
                     .padding(horizontal = 16.dp)
             ) {
                 // 下拉刷新提示（/ 刷不了的原因）。按设计规范放在日期筛选**上面**
@@ -163,28 +186,24 @@ fun ScheduleScreen(
                     color = MaterialTheme.colorScheme.onSurface,
                 )
 
-                Spacer(Modifier.height(16.dp))
+                Spacer(Modifier.height(DayHeaderGap))
 
-                // 放假那天整列不亮（课照旧列出，灰着）—— 判据是 dayIsLit，与日历页/周视图同一个
-                val lit = dayIsLit(selectedDate)
-                entries.forEach { entry ->
-                    CourseCard(
-                        course = entry,
-                        highlighted = entry.key == highlightedKey,
-                        dim = !lit,
-                        metaText = "${weekdayLabel(entry.weekday)} ${entry.periodLabel}" +
-                            entry.weeks.takeIf { it.isNotBlank() }?.let { " · $it" }.orEmpty(),
-                        // 点击 → 详情浮层：列的是**这一天**的课（与上面这份列表同一份数据）
-                        onClick = { onCourseClick(selectedDate, entries) },
-                        // 教务系统的课删不掉（下次同步又会回来），只有本地课给长按删除
-                        onLongClick = (entry as? CourseEntry.Local)?.let { local ->
-                            { pendingDelete = local.course }
-                        },
-                    )
-                    Spacer(Modifier.height(12.dp))
-                }
+                // ★ 卡片区吃掉"上面这些固定信息 + 下面那个按钮"之后剩下的全部高度，
+                //   于是行高能由它**量出来**（见 DayCourseList）。这里给 weight(1f) 是关键：
+                //   没有它，卡片区的高度会由内容撑，行高也就无从算起
+                DayCourseList(
+                    entries = entries,
+                    // 放假那天整列不亮（课照旧列出，灰着）—— 判据是 dayIsLit，与日历页/周视图同一个
+                    lit = dayIsLit(selectedDate),
+                    highlightedKey = highlightedKey,
+                    selectedDate = selectedDate,
+                    // 点击 → 详情浮层：列的是**这一天**的课（与上面这份列表同一份数据）
+                    onCourseClick = { onCourseClick(selectedDate, entries) },
+                    onEditCourse = { course -> pendingAction = course },
+                    modifier = Modifier.weight(1f),
+                )
 
-                Spacer(Modifier.height(8.dp))
+                Spacer(Modifier.height(DayListGap))
 
                 CampusButton(
                     text = "添加课程",
@@ -193,7 +212,7 @@ fun ScheduleScreen(
                     modifier = Modifier.fillMaxWidth(),
                 )
 
-                Spacer(Modifier.height(24.dp))
+                Spacer(Modifier.height(DayBottomGap))
             }
         }
 
@@ -201,23 +220,250 @@ fun ScheduleScreen(
         RefreshNotice()
     }
 
-    // 长按删除确认
-    pendingDelete?.let { course ->
+    // 长按卡片的操作：编辑 / 删除。
+    // 「编辑」为什么也放这儿：在卡片上再塞一个图标按钮会让课表变吵，
+    // 而长按本来就已经是"针对这一门课"的手势了。
+    pendingAction?.let { course ->
         AlertDialog(
-            onDismissRequest = { pendingDelete = null },
-            title = { Text("删除课程") },
-            text = { Text("确定删除「${course.name}」吗？") },
+            onDismissRequest = { pendingAction = null },
+            title = { Text(course.name) },
+            text = {
+                Text(
+                    listOf(
+                        weekdayLabel(course.weekday),
+                        course.periodLabel,
+                        course.weeks,
+                    ).filter { it.isNotBlank() }.joinToString(" · ")
+                )
+            },
             confirmButton = {
-                TextButton(onClick = {
-                    CourseRepository.remove(course.id)
-                    pendingDelete = null
-                }) { Text("删除") }
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    TextButton(onClick = {
+                        pendingAction = null
+                        onEditCourse(course)
+                    }) { Text("编辑") }
+                    TextButton(onClick = {
+                        CourseRepository.remove(course.id)
+                        pendingAction = null
+                    }) { Text("删除") }
+                }
             },
             dismissButton = {
-                TextButton(onClick = { pendingDelete = null }) { Text("取消") }
+                TextButton(onClick = { pendingAction = null }) { Text("取消") }
             },
         )
     }
+}
+
+/** 卡片之间的间距（行高预算里要把它扣掉，见 [dayRowHeight]）*/
+private val DayCardGap = 8.dp
+
+/** 门数那行与卡片区之间 / 卡片区与「添加课程」之间 / 底部留白 */
+private val DayHeaderGap = 12.dp
+private val DayListGap = 8.dp
+private val DayBottomGap = 16.dp
+
+/**
+ * **一天的课程列表：把整屏高度按课程张数分给每一行**（与日历页周视图同一套口径）。
+ *
+ * ## 它解决的是"课多了要滚"
+ *
+ * 这一页原来是整页 `verticalScroll`：一天六七门课就得上下滑。而"今天有什么课"
+ * 本来就该一眼看完，所以现在：
+ *
+ *  - 卡片区由调用方给 `weight(1f)` —— 也就是**下拉提示 / 星期 / 状态条 / 周次 /
+ *    节假日 / 门数这些固定信息**与「添加课程」按钮之后，真正剩下的那一条高度；
+ *  - **行数** = 当天**真正有课**的张数（`coursesOfDate` 给的，不猜、也不写死：
+ *    一天排几门由数据说，跟"这所学校一天几节""一节课多少分钟"都无关）；
+ *  - **行高** = (这条高度 − 卡片间距总和) ÷ 行数，再夹进
+ *    [courseCardRowBounds] 给的上下限（下限 = 卡片还读得出来的最小高度，
+ *    上限 = 课名两行 + 时间地点 + 节次的自然高度）；
+ *  - 于是"行数 × 行高 + 间距"正好铺满这条高度 —— **一屏看完，不用滚**。
+ *
+ * ## 变矮的是行，退档的是卡片
+ *
+ * 行高可能只有 60dp 出头。那种高度下由**卡片自己**退档（课名收成一行、
+ * 整条「时间 · 地点」行撤掉，见 `CourseCard` 与它上面那张分档表）——
+ * 这一层只负责"把高度算对"，不做"挤一挤"。
+ *
+ * ## 只有压到下限仍放不下时才让列表自己滚
+ *
+ * 小屏 + 超大系统字号 + 一天七八门课，三者凑齐时**真的放不下**。那就按最小行高铺开、
+ * 让卡片区自己内部滚（固定信息与按钮都不动），而不是把行高继续往下压 ——
+ * 压到字被裁掉半截，比"需要滚动"更糟。日历页周视图也是这么处理的。
+ *
+ * ## 滚动容器为什么**始终**挂着
+ *
+ * 一屏放得下时它其实滚不动（内容比容器矮），但不能省：`PullToRefreshBox` 的
+ * 「下拉刷新」靠的是**子级滚动容器的嵌套滚动事件**，去掉它这一页的下拉刷新就没了。
+ *
+ * ## ★ 这里没有任何动效，也不许加
+ *
+ * 课表的位置本身就是信息（架构指南 §2.5「只改颜色，不做位移/缩放」）。
+ * 这次只算**高度**：卡片该在第几行还在第几行，骨架一格都不动。
+ *
+ * @param onCourseClick 点某张卡片（详情浮层列的是这一天**全部**课，调用方已经绑好）
+ * @param onEditCourse 长按某张卡片 → 调用方弹「编辑 / 删除」的确认框
+ */
+@Composable
+private fun DayCourseList(
+    entries: List<CourseEntry>,
+    lit: Boolean,
+    highlightedKey: String?,
+    selectedDate: LocalDate,
+    onCourseClick: () -> Unit,
+    onEditCourse: (Course) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    // 行高的上下限由**实测的字行高**推出来（系统字号变大时它会跟着变），
+    // 不在这里写死 dp —— 理由见 CourseCard 上面那段注释
+    val rowBounds = courseCardRowBounds(LocalDensity.current)
+
+    BoxWithConstraints(modifier.fillMaxWidth()) {
+        val rowCount = entries.size
+        // maxHeight 有界是调用方 weight(1f) 保证的；真无界（理论上不会）时退回下限，不让它崩
+        val rowHeight = dayRowHeight(
+            availableHeight = maxHeight,
+            rowCount = rowCount,
+            gap = DayCardGap,
+            minRowHeight = rowBounds.min,
+            maxRowHeight = rowBounds.max,
+        )
+        val totalHeight = if (rowCount <= 0) 0.dp else rowHeight * rowCount + DayCardGap * (rowCount - 1)
+
+        // 滚动状态照常先建（不放进 if 里，免得条件分支上反而多一层可辨识性开销）
+        val innerScroll = rememberScrollState()
+        Box(
+            Modifier
+                .fillMaxSize()
+                .verticalScroll(innerScroll),
+            // 行数少、行高被上限封住时整块比卡片区矮 —— 上下居中，
+            // 免得"课程全挤在上半截、下半截空着"看起来像漏画。
+            // 只在**不滚动**时居中（此时内容必然 ≤ 卡片区，居中绝不会把内容顶出可视区）
+            contentAlignment = if (totalHeight > maxHeight) Alignment.TopStart else Alignment.Center,
+        ) {
+            Column(Modifier.fillMaxWidth()) {
+                // 本次真正"新增"的卡片（换天/首次组合都不算）——见 rememberFreshCardKeys 的边界说明
+                val freshKeys = rememberFreshCardKeys(selectedDate, entries.map { it.key })
+                entries.forEachIndexed { index, entry ->
+                    if (index > 0) Spacer(Modifier.height(DayCardGap))
+                    NewCourseCardReveal(animate = entry.key in freshKeys) {
+                        CourseCard(
+                            course = entry,
+                            // 行高固定：整份列表的高度因此是**算出来的**，不是内容撑出来的
+                            modifier = Modifier.height(rowHeight),
+                            highlighted = entry.key == highlightedKey,
+                            dim = !lit,
+                            metaText = "${weekdayLabel(entry.weekday)} ${entry.periodLabel}" +
+                                entry.weeks.takeIf { it.isNotBlank() }?.let { " · $it" }.orEmpty(),
+                            // 卡片按这个高度决定画几行课名、要不要撤掉「时间 · 地点」行
+                            rowHeight = rowHeight,
+                            onClick = onCourseClick,
+                            // 教务系统的课改不了（下次同步又会回来），只有本地课给长按操作（编辑 / 删除）
+                            onLongClick = (entry as? CourseEntry.Local)?.let { local ->
+                                { onEditCourse(local.course) }
+                            },
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+/**
+ * **一行课程卡的高度** = "卡片区真正剩下的高度 ÷ 课程张数"（纯函数，`ScheduleRowHeightTest` 钉住）。
+ *
+ * 这是"一屏看完"与"卡片尽量大"能同时成立的那一处：
+ *
+ *  - 一天三门课 → 每行能分到 120dp 上下（被 [maxRowHeight] 封顶），课名能折到两行；
+ *  - 一天六门课 → 每行 70dp 上下，卡片自己退成紧凑档，照样全在一屏里；
+ *  - 一天十门课（小屏）→ 压到 [minRowHeight] 也放不下 → 调用方据此让列表**内部滚**。
+ *
+ * @param gap 卡片之间的间距（**先扣掉间距再平分**，否则"行数 × 行高"会超出可用高度）
+ * @param minRowHeight 卡片还读得出来的最小高度（来自 `courseCardRowBounds`）
+ * @param maxRowHeight 行高上限：再高就不是"一行课"了，而是一张空壳卡片
+ */
+internal fun dayRowHeight(
+    availableHeight: Dp,
+    rowCount: Int,
+    gap: Dp,
+    minRowHeight: Dp,
+    maxRowHeight: Dp,
+): Dp {
+    if (rowCount <= 0) return minRowHeight
+    // 高度无界 / 非有限值（理论上不会发生）时退回下限，不让它崩
+    if (!availableHeight.value.isFinite()) return minRowHeight
+    val gaps = gap * (rowCount - 1)
+    return ((availableHeight - gaps) / rowCount).coerceIn(minRowHeight, maxRowHeight)
+}
+
+/**
+ * **新出现的课程卡片**：淡入 + 轻微上移。
+ *
+ * ## 为什么要一个组件、而不是直接给 `CourseCard` 挂 `Modifier.animateXxx`
+ *
+ * 这一页的列表是普通 `Column` + `verticalScroll`（不是 `LazyColumn`），
+ * 没有 `animateItem` 可挂的 item scope；而 `AnimatedVisibility` 需要一个"可见性"入口，
+ * 所以包一层。**位移量刻意很小**（高度的 1/14，约 6dp）——
+ * §2.5 记录过"整块浮起 6dp + 淡入"在课表上被否决，理由是课表的位置本身就是信息；
+ * 这里只动**新增的那一张**（其余卡片一动不动），6dp 只够表达"它是刚加进来的"。
+ *
+ * ## ★ 关键：不能每次重组都重播
+ *
+ * [animate] 由 [rememberFreshCardKeys] 给出，只有**真正新增**的 key 才是 true。
+ * 否则滚动一次、算一次"下一节课"高亮、甚至换配色导致的整树重组，
+ * 都会让满屏卡片重新淡入一遍 —— 看起来就是"整页在闪"。
+ */
+@Composable
+private fun NewCourseCardReveal(animate: Boolean, content: @Composable () -> Unit) {
+    val animations = rememberAnimationsEnabled()
+    AnimatedVisibility(
+        visible = true,
+        // 系统关动画 / 不是新增的卡片：EnterTransition.None = 首帧即就位，不闪
+        enter = if (animations && animate) {
+            fadeIn(enterTween()) + slideInVertically(enterTween()) { height -> -height / 14 }
+        } else {
+            EnterTransition.None
+        },
+    ) {
+        content()
+    }
+}
+
+/**
+ * 记住"这个日期下**已经出现过**的卡片 key"，返回本次**新增**的那些。
+ *
+ * ## 边界（每条都对应一种"整页闪一下"）
+ *
+ * - **换了一个日期**：整份列表换了内容，不是"新增了一门课" → 一律不算新增，
+ *   并清空上一天记下的 key（否则在两天之间来回切，第二天的课会被当成"新增"重播）；
+ * - **首次组合 / 这一页刚出现**：[cardKeys] 为空 → 没有可比的基准，不算新增；
+ * - **算完必须立刻把本轮 key 记下**：写在组合体里而不是 `LaunchedEffect` 里 ——
+ *   后者要等一个副作用周期，中间那一帧新卡片已经画出来了，随后才播一遍进场
+ *   （观感是"先闪一下再淡入"）。
+ *
+ * 只在组合阶段写这一次状态，且写的是"上一轮的集合"，属于 Compose 里
+ * "记住上一次输入"的常规写法：不会每帧都写，也不会反复触发重组。
+ */
+@Composable
+private fun rememberFreshCardKeys(date: LocalDate, cardKeys: List<String>): Set<String> {
+    val cache = remember { mutableStateOf<Pair<LocalDate, Set<String>>?>(null) }
+    val cachedDate = cache.value?.first
+    val cachedKeys = cache.value?.second ?: emptySet()
+    val fresh = if (cachedDate != date || cardKeys.isEmpty()) {
+        emptySet()
+    } else {
+        cardKeys.filterNot { it in cachedKeys }.toSet()
+    }
+    val nextKeys = if (cachedDate == date) cachedKeys + cardKeys else cardKeys.toSet()
+    if (cachedDate != date || cachedKeys != nextKeys) {
+        cache.value = date to nextKeys
+    }
+    return fresh
 }
 
 /**

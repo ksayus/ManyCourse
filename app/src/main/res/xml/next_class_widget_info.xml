@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  「下一节课」小组件的声明。
+
+  ## 尺寸：为什么是 110dp
+  Android 对 n 个格子的推荐最小宽度是 `n * 70 - 30`，2 格 = **110dp** ——
+  这是给**老版本启动器**兜底的（它们只看 minWidth/minHeight）。
+  `targetCellWidth/Height = 2` 是 API 31 起的新口径，直接告诉启动器"我要 2x2"，
+  两个都写上，实际占位才是稳的 2x2 而不是"2x2 上下浮动"。
+
+  ## updatePeriodMillis = 30 分钟（这是系统允许的最小值）
+  这是**兜底刷新**，不是主要刷新手段（系统会把它对齐到整点、且设备休眠时不保证准时）。
+  真正让小组件变新的是 `widget/WidgetRefresh.kt`：App 里同步完课表、退出登录、
+  以及课前提醒闹钟触发时，都主动调一次刷新。
+
+  ## resizeMode = none
+  这个小组件的排版是按 2x2 死写的（文字行数、留白都按那个尺寸调过），
+  允许拉成 4x2 只会得到一片被拉变形的空白。宁可不让拉。
+-->
+<appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"
+    android:description="@string/widget_next_class_description"
+    android:initialLayout="@layout/widget_next_class"
+    android:minHeight="110dp"
+    android:minWidth="110dp"
+    android:resizeMode="none"
+    android:targetCellHeight="2"
+    android:targetCellWidth="2"
+    android:updatePeriodMillis="1800000"
+    android:widgetCategory="home_screen" />

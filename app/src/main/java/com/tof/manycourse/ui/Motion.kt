@@ -3,7 +3,10 @@ package com.tof.manycourse.ui
 import android.animation.ValueAnimator
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.FiniteAnimationSpec
+import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.TweenSpec
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -13,13 +16,20 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.unit.IntOffset
 
 /**
- * 动效规范：时长与缓动集中定义，页面切换 / 浮层进出场统一使用。
+ * 动效规范：时长、缓动、弹性集中定义，页面切换 / 浮层进出场 / 按压反馈统一使用。
  *
  * Compose 动画与 Fragment 动画资源本身都会跟随系统「动画时长缩放」；
  * 这里再显式判断一次 [enabled]，系统关闭动画或开启"减少动态效果"时直接跳过，
  * 避免无意义的动画帧与闪烁。
+ *
+ * ## 弹性（spring）用在哪、不用在哪
+ *
+ * 弹性只用在**压得住的小动作**上：按压回弹、chip/开关的选中态、浮层的进出场缓动、
+ * 列表插入的淡入上移。**不用在**任何位移课表骨架的动作上（Tab 切换、课表网格、
+ * 换周翻月）—— 那几条是架构指南 §2.5 明确否决过的，理由与弹性无关，见那里的说明。
  */
 object Motion {
     /** 进入：200–300ms */
@@ -38,6 +48,41 @@ object Motion {
     fun enabled(): Boolean = runCatching { ValueAnimator.areAnimatorsEnabled() }.getOrDefault(true)
 }
 
+/**
+ * 按压回弹（"Q 弹"）。
+ *
+ * `DampingRatioMediumBouncy` = 阻尼比约 0.5，收尾会有一次很轻的回弹 —— 这就是"Q 弹"的手感。
+ * 不用 `HighBouncy`（0.2）：那在卡片上会看起来像"卡片在跳"，
+ * 而这个项目的动效基调是克制（§2.5 的几条否决都是因为"抖"）。
+ *
+ * `visibilityThreshold` 设到 0.1%：缩放这种肉眼不敏感的量没必要追到浮点误差，
+ * 早一点停能省下最后几帧的无用绘制。
+ */
+fun tapSpring(): FiniteAnimationSpec<Float> = spring(
+    dampingRatio = Spring.DampingRatioMediumBouncy,
+    stiffness = Spring.StiffnessMedium,
+    visibilityThreshold = TapSpringVisibilityThreshold,
+)
+
+/**
+ * 浮层进出场用的**轻**弹性：比 [tapSpring] 更硬（`LowBouncy`）。
+ *
+ * 浮层是一个大面板，回弹幅度一大就会显得"面板在晃"。这里只借它"收尾不急刹"的一点余韵，
+ * **位移幅度一个像素都没改**（`GlassOverlay` 里仍是 `height / 14` 与 `height / 20`）——
+ * §2.5 只禁了缩放入场，没禁换缓动。
+ */
+fun overlaySpring(): FiniteAnimationSpec<Float> = spring(
+    dampingRatio = Spring.DampingRatioLowBouncy,
+    stiffness = Spring.StiffnessMediumLow,
+    visibilityThreshold = OverlaySpringVisibilityThreshold,
+)
+
+/** 按压缩放的量化步进（0.1%）：见 [tapSpring] 的说明 */
+private const val TapSpringVisibilityThreshold = 0.001f
+
+/** 位移的量化步进（1/4 px）：比像素还细，停下时看不出台阶 */
+private const val OverlaySpringVisibilityThreshold = 0.25f
+
 /** 组合内读取一次系统动效开关（系统设置变化通常伴随重建，无需实时监听） */
 @Composable
 fun rememberAnimationsEnabled(): Boolean = remember { Motion.enabled() }
@@ -49,6 +94,34 @@ fun <T> enterTween(): TweenSpec<T> =
 /** 退出 tween */
 fun <T> exitTween(): TweenSpec<T> =
     tween(durationMillis = Motion.ExitMillis, easing = Motion.Easing)
+
+/**
+ * 浮层进场：**位移幅度不变**，只把缓动换成轻弹性。
+ *
+ * 为什么按类型分成三个（而不是一个泛型函数）：Compose 的 `spring()` 返回的是
+ * `SpringSpec<T>`，而 `T` 由 `visibilityThreshold` 的类型决定 ——
+ * 泛型函数体里给不出 `T` 的实例，只能每个用到的类型写一个。
+ * `fadeIn` 要 `Float`（alpha），`slideInVertically` 要 `IntOffset`（像素位移）。
+ */
+fun enterOverlayFade(): FiniteAnimationSpec<Float> =
+    if (Motion.enabled()) overlaySpring() else enterTween()
+
+fun enterOverlayOffset(): FiniteAnimationSpec<IntOffset> =
+    if (Motion.enabled()) overlayOffsetSpring() else enterTween()
+
+/** 浮层退场：同上 */
+fun exitOverlayFade(): FiniteAnimationSpec<Float> =
+    if (Motion.enabled()) overlaySpring() else exitTween()
+
+fun exitOverlayOffset(): FiniteAnimationSpec<IntOffset> =
+    if (Motion.enabled()) overlayOffsetSpring() else exitTween()
+
+/** 位移用的轻弹性（量化步进按像素给，见 [overlaySpring] 的说明）*/
+private fun overlayOffsetSpring(): FiniteAnimationSpec<IntOffset> = spring(
+    dampingRatio = Spring.DampingRatioLowBouncy,
+    stiffness = Spring.StiffnessMediumLow,
+    visibilityThreshold = IntOffset(1, 1),
+)
 
 /**
  * **「内容换了就淡入淡出」的进度**：0 = 还没显出来（全透明），1 = 就位。

@@ -1,17 +1,24 @@
 package com.tof.manycourse
 
+import android.Manifest
 import android.graphics.Color
+import android.os.Build
 import android.os.Bundle
 import androidx.activity.SystemBarStyle
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.fragment.app.Fragment
 import com.tof.manycourse.data.CourseSync
 import com.tof.manycourse.data.LoginSettings
 import com.tof.manycourse.data.SessionStore
+import com.tof.manycourse.notify.ClassReminderNotifier
+import com.tof.manycourse.notify.NotificationPermission
+import com.tof.manycourse.reminder.ClassReminderScheduler
 import com.tof.manycourse.ui.MainTabStore
 import com.tof.manycourse.ui.Motion
 import com.tof.manycourse.ui.disableContrastScrims
+import com.tof.manycourse.widget.WidgetRefresh
 
 /**
  * 主界面 Activity：底部导航为 Compose 玻璃底栏（位于各 Fragment 内），
@@ -23,11 +30,26 @@ import com.tof.manycourse.ui.disableContrastScrims
  * 另外这里还是**登录后同步的起点**：挂载完页面就按登录时选的学校去拉
  * 姓名 + 课表（`CourseSync`），失败也不拦着用户进主界面，
  * 只在课表页显示原因。
+ *
+ * 也是**通知权限的唯一申请入口**（第一次进主界面时问一次，见 [askNotificationPermissionOnce]）。
  */
 class ManyCourseMain : AppCompatActivity() {
 
     private lateinit var tabFragments: List<Fragment>
     private var activeIndex = 0
+
+    /**
+     * 通知权限的申请结果。
+     *
+     * 拿到权限后重排一次提醒（幂等）：闹钟链本身**不看**这条权限，
+     * 但"提醒发得出来"要看 —— 重排一次让下一条提醒按刚变化的状态重算一遍，
+     * 与设置页拿到权限后的处理是同一条口径。
+     */
+    private val notificationPermissionLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        if (granted) ClassReminderScheduler.reschedule(this)
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -82,6 +104,72 @@ class ManyCourseMain : AppCompatActivity() {
             schoolId = SessionStore.schoolId.value ?: LoginSettings.selectedSchoolId.value,
             account = SessionStore.account.value,
         )
+
+        // 第一次进主界面时问一次通知权限（Android 13+）—— 详见方法注释
+        askNotificationPermissionOnce()
+    }
+
+    /**
+     * **第一次进到主界面**时申请一次通知权限。
+     *
+     * ## 为什么不放在登录页
+     *
+     * 登录页在**还没登录**的时候就会显示（用户可能只是打开看一眼学校列表），
+     * 那时候弹一个"要不要允许通知"没有任何上下文：用户不知道这是为了课前提醒，
+     * 顺手点掉就再也拿不回来了。主界面才是"他已经在用这个 App"的地方。
+     *
+     * ## 为什么必须有一个"问过就不再自动问"的闸门
+     *
+     * 这个方法是挂在 `onCreate` 上的，而主界面**每次冷启动、每次从登录页进来**都会重建。
+     * 没有闸门的话就是"每次回来都弹"—— 而 Android 13 起同一条权限被拒两次之后
+     * 系统**根本不再显示弹窗**，那时用户点开 App 只会看到什么都没发生。
+     * 闸门与"系统还能不能弹"的判定都在 [NotificationPermission] 里，被单测钉住。
+     *
+     * ## 被拒之后的路
+     *
+     * 这里**不再自动弹**，但设置页的「通知设置」卡片会把"未授予 —— 提醒发不出来"如实写出来，
+     * 并给一个入口（还能弹就再申请一次，系统已经不弹了就直接跳系统通知设置）。
+     * 也就是说：不骚扰，但也不是死路。
+     */
+    private fun askNotificationPermissionOnce() {
+        // ★ 渠道**先建好**再问权限，理由有两层：
+        //   ① Android 13 的权限弹窗里引用的就是这条渠道的说明（用户点"允许"时知道自己在允许什么）；
+        //   ② 渠道不先建出来，系统设置里就只有"通知"一个总开关，用户无从知道该开哪一项。
+        ClassReminderNotifier.ensureChannel(this)
+
+        NotificationPermission.attach(this)
+        val shouldAsk = NotificationPermission.shouldAskAutomatically(
+            sdkInt = Build.VERSION.SDK_INT,
+            granted = NotificationPermission.granted(this),
+            askedBefore = NotificationPermission.askedBefore(),
+        )
+        if (!shouldAsk) return
+
+        // 弹之前就记下"问过了"：见 NotificationPermission.markAsked 的注释
+        NotificationPermission.markAsked()
+        notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+    }
+
+    /**
+     * 每次回到主界面都重排一次课前提醒、刷新一次桌面小组件。
+     *
+     * ## 为什么挂在这里，而不是挂在"同步成功"的回调里
+     *
+     * 同步是异步的，而"课表变了"这件事并不只有同步一个来源（退出登录、用户改提前量、
+     * 系统时间跳变都会影响"下一次该在什么时候提醒"）。挂在每次 `onResume` 上，
+     * 这些路径**一条都不用单独接**，而且天然覆盖了刚登录完那一次
+     * （登录流程走完就是进这个 Activity）。
+     *
+     * ## 就算这里漏了一次，也不会"提醒错"
+     *
+     * 闹钟醒来时 `ClassReminderReceiver` 会拿**当时**的课表重新解一遍再决定发不发，
+     * 所以排早了/排旧了最多是多醒一次，不会发出错误的提醒。
+     * 这里只是让"该响的时候真的排上了"，属于及时性而不是正确性。
+     */
+    override fun onResume() {
+        super.onResume()
+        ClassReminderScheduler.reschedule(this)
+        WidgetRefresh.updateAll(this)
     }
 
     /**

@@ -1,0 +1,91 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  2x2「下一节课」小组件的布局。
+
+  ★ **RemoteViews 只认一小撮 View**：FrameLayout / LinearLayout / RelativeLayout / GridLayout /
+    TextView / ImageView / Button / ProgressBar / Chronometer … —— ConstraintLayout、
+    Compose、自定义 View **都不行**（会被系统拒绝或静默渲染成空白）。
+    所以这里就是 LinearLayout + TextView 的最朴素组合。
+
+  ★ 字号全部**显式给死**（不用 autoSizeTextType，RemoteViews 不支持）：
+    桌面进程不受我们 App 内字体设置的影响，靠系统自适应会在用户放大系统字号时
+    把文字挤出格子，而小组件溢出的部分会直接被裁掉、没有滚动可救。
+    所以课程名给 2 行 + ellipsize，其余一律 1 行 + ellipsize。
+
+  ★ 每个 TextView 的 id 都是 `widget/NextClassWidgetProvider.kt` 里 setTextViewText 的目标，
+    改名要同步改那边（RemoteViews 是按 id 找控件的，找不到会抛异常）。
+-->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/widget_root"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@drawable/widget_next_class_bg"
+    android:orientation="vertical"
+    android:padding="13dp">
+
+    <!-- 固定标题"下一节课"：让用户一眼知道这块格子回答的是哪个问题 -->
+    <TextView
+        android:id="@+id/widget_label"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:maxLines="1"
+        android:text="@string/widget_next_class_label"
+        android:textColor="@color/widget_label"
+        android:textSize="10sp" />
+
+    <!--
+      课程名：唯一允许占 2 行的元素（课程名长且不可缩略，截一半就没用了）。
+      用 layout_weight 吸收剩余空间，这样"没有地点/没有状态行"时它也不会缩成一条缝；
+      `gravity=center_vertical` 让它在**空态**（只有一句提示、下面几行都空着）时也居中，
+      而不是顶在上面、下方留一大块白 —— 那是真机截图里一眼就看出来的别扭。
+    -->
+    <TextView
+        android:id="@+id/widget_name"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_marginTop="5dp"
+        android:layout_weight="1"
+        android:ellipsize="end"
+        android:gravity="center_vertical"
+        android:maxLines="2"
+        android:textColor="@color/widget_name"
+        android:textSize="16sp"
+        android:textStyle="bold" />
+
+    <!-- 节次 + 时刻，如「第1-2节 · 9:00」；作息未收录时只有「第1-2节」 -->
+    <TextView
+        android:id="@+id/widget_meta"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="3dp"
+        android:ellipsize="end"
+        android:maxLines="1"
+        android:textColor="@color/widget_meta"
+        android:textSize="11sp" />
+
+    <!-- 教室（含校区），如「A1N403 禄口」；没有地点时整行留空不占位 -->
+    <TextView
+        android:id="@+id/widget_room"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="1dp"
+        android:ellipsize="end"
+        android:maxLines="1"
+        android:textColor="@color/widget_room"
+        android:textSize="11sp" />
+
+    <!--
+      状态行：「还有 12 分钟」/「正在上课」/「明天 9:00」/「今天的课都上完了」/「打开 App 同步课表」。
+      这四种状态文案**必须分开**（见 strings.xml 那段注释），所以这里由代码 setText，
+      不在布局里写死任何一句。
+    -->
+    <TextView
+        android:id="@+id/widget_status"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="5dp"
+        android:ellipsize="end"
+        android:maxLines="1"
+        android:textColor="@color/widget_status"
+        android:textSize="11sp" />
+</LinearLayout>

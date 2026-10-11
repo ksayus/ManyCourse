@@ -22,6 +22,7 @@ import androidx.compose.ui.platform.ComposeView
 import androidx.fragment.app.Fragment
 import dev.chrisbanes.haze.HazeState
 import dev.chrisbanes.haze.hazeSource
+import com.tof.manycourse.data.Course
 import com.tof.manycourse.data.CourseEntry
 import com.tof.manycourse.ui.AddCourseScreen
 import com.tof.manycourse.ui.CourseDetailDialog
@@ -53,6 +54,9 @@ class ClassScheduleFragment : Fragment() {
                 val hazeState = remember { HazeState() }
                 var showAddCourse by remember { mutableStateOf(false) }
                 var addCourseWeekday by remember { mutableIntStateOf(1) }
+                // 非 null = 正在**编辑**这一门课；null = 新增。
+                // 两者共用同一个面板（见 AddCourseScreen 的注释），所以这里只需要记住"编辑谁"
+                var editingCourse by remember { mutableStateOf<Course?>(null) }
                 // 课程详情浮层：内容和可见性**分开存** —— 关闭时内容要留着，
                 // 退出动画那 200ms 才有东西可画（与 AddCourseScreen 同一套路子）。
                 // 内容是"某一天的全部课"：详情卡列那天有什么课，不是点中的那一门
@@ -85,6 +89,8 @@ class ClassScheduleFragment : Fragment() {
                             ScheduleScreen(
                                 hazeState = hazeState,
                                 onAddCourse = { weekday ->
+                                    // 走「添加」时把编辑目标清掉：否则上一次编辑的课会被带进来
+                                    editingCourse = null
                                     addCourseWeekday = weekday
                                     showAddCourse = true
                                 },
@@ -92,6 +98,10 @@ class ClassScheduleFragment : Fragment() {
                                     detailDate = date
                                     detailCourses = courses
                                     showDetail = true
+                                },
+                                onEditCourse = { course ->
+                                    editingCourse = course
+                                    showAddCourse = true
                                 },
                             )
                         }
@@ -104,8 +114,16 @@ class ClassScheduleFragment : Fragment() {
                     AddCourseScreen(
                         visible = showAddCourse,
                         initialWeekday = addCourseWeekday,
-                        onDismiss = { showAddCourse = false },
-                        onSaved = { showAddCourse = false },
+                        // 非 null = 编辑模式（标题、按钮、保存路径都跟着变）
+                        editing = editingCourse,
+                        onDismiss = {
+                            showAddCourse = false
+                            editingCourse = null
+                        },
+                        onSaved = {
+                            showAddCourse = false
+                            editingCourse = null
+                        },
                     )
                     // 课程详情：挂在根 Box 上（和「添加课程」一样）才能盖住整页 ——
                     // 挂在内容区里的话遮罩会被页头/底栏截断

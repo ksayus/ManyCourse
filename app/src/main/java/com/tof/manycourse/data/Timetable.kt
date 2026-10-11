@@ -7,25 +7,24 @@ import com.tof.manycourse.gr_api.SchoolRegistry
  *
  * ## 为什么必须按学校分表
  *
- * 各校的节数**根本不一样**：广软、金城是 16 节（8 行），而**广东工业大学是 14 节**——
- * 它自己的课表页（`xsgrkbcx!xsAllKbList.action`，抓包原文见
- * `web_fetch/gdut_extract/244_GET__xsgrkbcx_xsAllKbList.action.res.txt`）渲染的就是
- * 「第01节 … 第14节」这 14 行。
+ * 各校的节数**根本不一样**：广软、金城是 16 节（8 行），而**广东工业大学是 12 节**（6 行）。
  *
- * 早先全应用共用一张写死的 8 行表（16 节），等于替广工**多造了两节课**：
- * 「添加课程」能选到不存在的第 15-16 节，脏数据也会被夹到第 16 节而不是第 14 节。
+ * 早先全应用共用一张写死的 8 行表（16 节），等于替广工**多造了四节课**：
+ * 「添加课程」能选到不存在的第 13-16 节，脏数据也会被夹到第 16 节而不是第 12 节。
  *
- * ## 时刻可以有，也可以没有
+ * ## 时刻可以有，也可以没有（而且是**逐块**的）
  *
- * [Block.start] 为空串 = **这所学校我们还没拿到准确作息**。此时宁可：
- *  - 时间轴只画「第N-M节」那一行（不画开始/结束时刻，见 `CalendarGridLayout.PeriodAxis`）；
- *  - "现在上到第几节""下一节课"这类依赖时刻的功能**整块停用**（它们要的是真值）；
+ * [Block.start] 为空串 = **这个块我们还没拿到准确作息**。此时宁可：
+ *  - 时间轴这一行只画「第N-M节」、不画开始/结束时刻（`CalendarGridLayout.PeriodAxis`
+ *    本来就是**逐行**判断的，所以"半张表"也能如实画出来，不需要整表开关）；
+ *  - 落在这些块里的课**不排课前提醒**（`NextClass.nextForReminder` 只认有可信时刻的课）。
  *
  * 也不编一个时刻出来 —— 编出来的时刻会以"看起来很确定"的样子骗人，
  * 而"没时刻"至少是诚实的（与"读不到教学周就不猜开学日期"是同一条规矩）。
  *
  * @param blocks        每个"两节块"的起止（如 `("9:00", "10:20")`）；未知则 `("", "")`
- * @param periodMinutes 一节课多少分钟：用它把"块起点"推成块里两节各自的起止时刻
+ * @param periodMinutes 一节课多少分钟：块里第二节的开始时刻**没有显式给出**时用它推
+ *   （见 [Block.secondStart]）
  */
 data class Timetable(
     val blocks: List<Block>,
@@ -37,8 +36,25 @@ data class Timetable(
      *
      * @param start 块里**第一节的开始时刻**（`9:00`）；空串 = 不知道
      * @param end   块里**第二节的结束时刻**（`10:20`）；空串 = 不知道
+     * @param secondStart 块里**第二节的开始时刻**（`9:20`）；
+     *   **空串 = 按 [Timetable.periodMinutes] 推**（块起点 + 一节课的时长）
+     *
+     *   ## 为什么需要这个字段
+     *
+     *   "两节连排"这件事**各校不一样**：默认表里块内两节等长（各 40 分钟，间隔 0），
+     *   于是"第二节几点开始"能由"块起点 + 一节课"推出来。但有的学校**块内间隔是不等的** ——
+     *   广工就是：第 1-2 节隔 5 分钟、第 7-8 节隔 15 分钟、第 9-10 节隔 **25** 分钟。
+     *
+     *   只给一个统一的 `periodMinutes` 硬推的话，第 8 节会算成 16:15（实际 **16:30**）、
+     *   第 10 节会算成 18:05（实际 **18:30**）—— 课前提醒会早 15~25 分钟，
+     *   而且是**把错误的时刻当成事实显示**（见 README §4.9 那条规矩）。
+     *   所以宁可多这一个可选字段，也不猜。
      */
-    data class Block(val start: String, val end: String) {
+    data class Block(
+        val start: String,
+        val end: String,
+        val secondStart: String = "",
+    ) {
         /** 这个块有没有可信的起止时刻 */
         val known: Boolean get() = start.isNotBlank() && end.isNotBlank()
     }
@@ -78,17 +94,19 @@ data class Timetable(
     /**
      * 第 [period] 节的开始时刻；**节次越界或这所学校没有时刻表时返回空串**。
      *
-     * 块内两节各 [periodMinutes] 分钟：奇数节就是块起点，偶数节是块起点 + 一节的时长。
+     * - 块里的**第一节**就是块的起点；
+     * - 块里的**第二节**：学校给了 [Block.secondStart] 就用它（块内间隔不等的学校靠这个才准），
+     *   没给才按 `块起点 + periodMinutes` 推。
      */
     fun startOfPeriod(period: Int): String {
         if (period !in 1..maxPeriod) return ""
-        val blockStart = startOfBlock(blockIndexOf(period))
-        if (blockStart.isBlank()) return ""
-        return if (period % CourseRepository.PERIODS_PER_BLOCK == 1) {
-            blockStart
-        } else {
-            parseTime(blockStart)?.let { formatTime(it.plusMinutes(periodMinutes.toLong())) }.orEmpty()
-        }
+        val block = blocks.getOrNull(blockIndexOf(period)) ?: return ""
+
+        if (period % CourseRepository.PERIODS_PER_BLOCK == 1) return block.start
+
+        if (block.secondStart.isNotBlank()) return block.secondStart
+        val blockStart = parseTime(block.start) ?: return ""
+        return formatTime(blockStart.plusMinutes(periodMinutes.toLong()))
     }
 
     /** 第 [period] 节的结束时刻（开始 + [periodMinutes]）；未知返回空串 */
@@ -145,20 +163,47 @@ object Timetables {
     )
 
     /**
-     * **广东工业大学：14 节 / 7 个"两节块"**。
+     * **广东工业大学：12 节 / 6 个"两节块"，作息已收录**。
      *
-     * 节数来自它自己的课表页：服务端渲染的就是「第01节 … 第14节」14 行
-     * （抓包原文在 `web_fetch/gdut_extract/244_…xsAllKbList…res.txt`，单测钉住 14 节 / 7 块）。
+     * ## 时刻从哪来
      *
-     * ★ **时刻是空的，这是刻意的**：那次抓包里只有节数，没有作息；`getKbRq` 的 JSON 里
-     * 也没有时间字段，学校页面上也没有作息表。所以这张表只画「第N-M节」，
-     * 等拿到准确的作息（第 1 节几点到几点…）再往 [blocks] 里填 —— 填上之后
-     * 时间轴的时刻、"现在上到第几节"会自动开始工作，不用改别处。
+     * 学校官方的**作息时间表**，逐条抄下来，**没有推算任何一项**：
+     *
+     * ```
+     * 第1节 8:30-9:15    第2节 9:20-10:05   第3节 10:25-11:10  第4节 11:15-12:00
+     * 第5节 13:50-14:35  第6节 14:40-15:25  第7节 15:30-16:15  第8节 16:30-17:15
+     * 第9节 17:20-18:05  第10节 18:30-19:15 第11节 19:20-20:05 第12节 20:10-20:55
+     * ```
+     *
+     * ★ **每个块的 [Timetable.Block.secondStart] 都必须显式写出来**：广工块内两节的间隔
+     * **不是固定的**（5 / 5 / 5 / **15** / **25** / 5 分钟）。只给一个统一的 `periodMinutes`
+     * 硬推的话，第 8 节会算成 16:15（实际 16:30）、第 10 节会算成 18:05（实际 18:30）——
+     * 课前提醒会早 15~25 分钟，而且那是**把错误的时刻当成事实显示**。
+     *
+     * ## 节数：为什么是 12 而不是 14
+     *
+     * 学校课表页渲染的确实是**「第01节 … 第14节」14 行**（抓包原文在
+     * `web_fetch/gdut_extract/244_GET__xsgrkbcx_xsAllKbList.action.res.txt`，可逐行核对：
+     * `<td>第01节</td><td id="01-1">` … `<td>第14节</td><td id="14-1">`）。
+     * 但**官方的作息时间表只定义到第 12 节**，真实课表里也没有任何一门课排在第 13 节之后 ——
+     * 那两行是教务系统的**固定模板**，不是广工的作息。
+     *
+     * 所以按"作息是学校的事实"取 **12 节**。代价写在这里：万一服务端真返回第 13 节的课，
+     * 它会被 `blockIndexOf` 夹到最后一行的第 12 节上（与其它脏数据的夹取行为一致）——
+     * 真遇到了就把这里改回 7 块，并把第 7 个块的时刻一起补上即可。
      */
     val gdut = Timetable(
-        blocks = List(7) { Timetable.Block(start = "", end = "") },
-        // 时刻未知时这个数字用不上（推不出任何东西），先沿用默认表的 40 分钟
-        periodMinutes = 40,
+        blocks = listOf(
+            Timetable.Block("8:30", "10:05", secondStart = "9:20"),
+            Timetable.Block("10:25", "12:00", secondStart = "11:15"),
+            Timetable.Block("13:50", "15:25", secondStart = "14:40"),
+            Timetable.Block("15:30", "17:15", secondStart = "16:30"),
+            Timetable.Block("17:20", "19:15", secondStart = "18:30"),
+            Timetable.Block("19:20", "20:55", secondStart = "20:10"),
+        ),
+        // 一节课 45 分钟。注意：这不等于"上一节下课到下一节上课"的间隔 ——
+        // 后者各块不同，由 secondStart 显式给出（见上）
+        periodMinutes = 45,
     )
 
     /**

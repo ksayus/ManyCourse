@@ -12,9 +12,14 @@
   两条路径里的 path 都必须与 UpdateDownloader.directory() 里用的 updates 一致 ——
   不一致的表现是安装那一步才炸：IllegalArgumentException: Failed to find configured root。
 
+  exports/：**课表导出**（`.ics` 日历文件与课表图片）落在这里，然后交给系统分享面板。
+  和更新包一样只放 cache 下：导出文件是"用完就丢"的中间产物，**不占用户的相册/文档空间**，
+  系统清理缓存时一起回收也正合适。
+
   注意：本文件是 XML，注释里**不能出现连续两个减号**（AAPT2 会直接报解析错误）。
 -->
 <paths>
     <external-files-path name="updates" path="updates/" />
     <cache-path name="update_cache" path="updates/" />
+    <cache-path name="exports_cache" path="exports/" />
 </paths>

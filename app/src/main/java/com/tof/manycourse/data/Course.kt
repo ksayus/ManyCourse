@@ -42,7 +42,7 @@ data class Course(
     /**
      * 开始时间，按节次实时计算（走**当前学校**的作息表）。
      *
-     * **可能是空串**：这所学校还没拿到准确作息时（如广工，见 [Timetables.gdut]）
+     * **可能是空串**：这节课所在的块还没收录作息时（见 [Timetable.Block]）
      * 宁可空着，也不编一个时刻出来 —— 卡片那行会只显示地点（`listOf(startTime, room)
      * .filter { it.isNotBlank() }`）。
      */
@@ -59,6 +59,15 @@ object CourseRepository {
 
     /** 一个块里连排两节（各校一致：课表就是两节连排） */
     const val PERIODS_PER_BLOCK = 2
+
+    /**
+     * 用户没填地点时保存的**占位符**。
+     *
+     * 为什么它是一个具名常量而不是散在各处的中文字面量：冲突检测要判"两门课是不是同一间教室"，
+     * 而"地点待定"**不是一间教室** —— 两门都没填地点的课不该报教室冲突。
+     * 判定和写入必须问同一个常量，否则改文案时就会静默失效。
+     */
+    const val ROOM_PLACEHOLDER = "地点待定"
 
     /**
      * **当前作息** —— 节次表跟着"当前学校"走（见 [Timetable]）。
@@ -84,12 +93,12 @@ object CourseRepository {
     /**
      * 最大节次 = 块数 × 每块两节。
      *
-     * 默认表 16 节；**广东工业大学 14 节**（它自己的课表页就是 14 行，见 [Timetables.gdut]）——
+     * 默认表 16 节；**广东工业大学 12 节**（见 [Timetables.gdut]）——
      * 「添加课程」的节次选择与数据夹取都读这里，所以广工不会再出现第 15-16 节。
      */
     val MAX_PERIOD: Int get() = timetable.maxPeriod
 
-    /** 块数（= 周视图的行数上限）：默认 16 节 → 8 行；广工 14 节 → 7 行 */
+    /** 块数（= 周视图的行数上限）：默认 16 节 → 8 行；广工 12 节 → 6 行 */
     val BLOCK_COUNT: Int get() = timetable.blockCount
 
     /** 第 [period] 节的开始时刻；**越界、或这所学校还没有时刻表时返回空串**（不编时刻）*/
@@ -172,6 +181,42 @@ object CourseRepository {
         val course = Course(nextId++, name, teacher, room, weekday, startPeriod, periodCount, weeks, fromSchool)
         courses.add(course)
         return course
+    }
+
+    /**
+     * **改一门已经存在的课**（原地替换，`id` 不变）。
+     *
+     * 为什么不是"删了再加一门"：那样 `id` 会变，而 `id` 是课表页卡片高亮、详情弹窗、
+     * 冲突角标共用的稳定键 —— 换个 id 等于把用户刚点开的那张卡片换成了另一张。
+     *
+     * @param weeks 传 `null` = **保持原样**。教务系统同步来的课带着周次串（`3-5,8-20周`），
+     *   而"编辑"表单里并没有这一栏 —— 不传就等于别把它抹掉（抹掉会让那门课变成"每周都上"）
+     * @return 改完之后的课；`id` 不存在返回 `null`（调用方按"这门课已经没了"处理）
+     */
+    fun update(
+        id: Long,
+        name: String,
+        teacher: String,
+        room: String,
+        weekday: Int,
+        startPeriod: Int,
+        periodCount: Int,
+        weeks: String? = null,
+    ): Course? {
+        val index = courses.indexOfFirst { it.id == id }
+        if (index < 0) return null
+        val old = courses[index]
+        val next = old.copy(
+            name = name,
+            teacher = teacher,
+            room = room,
+            weekday = weekday,
+            startPeriod = startPeriod,
+            periodCount = periodCount,
+            weeks = weeks ?: old.weeks,
+        )
+        courses[index] = next
+        return next
     }
 
     /**

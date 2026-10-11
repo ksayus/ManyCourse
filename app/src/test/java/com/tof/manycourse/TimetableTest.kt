@@ -53,38 +53,80 @@ class TimetableTest {
         assertTrue("默认表有完整时刻", Timetables.default.hasTimes)
     }
 
-    // ── 广工：14 节 / 7 个两节块，且**没有时刻** ─────────────────────────────
+    // ── 广工：12 节 / 6 个两节块，作息已收录 ─────────────────────────────────
 
     @Test
-    fun gdutHasFourteenPeriodsInSevenBlocks() {
-        // ★ 这条钉的就是报上来的事实：广工一天 14 节。
-        //   依据是它自己的课表页（服务端渲染「第01节 … 第14节」14 行）
-        assertEquals("14 节 = 7 个两节块", 7, Timetables.gdut.blockCount)
-        assertEquals(14, Timetables.gdut.maxPeriod)
-        assertEquals(
-            "第 13-14 节就在最后一行（块下标 6）",
-            6,
-            Timetables.gdut.blockIndexOf(14),
-        )
-        assertEquals("越界的节次夹到最后一行，不让课从网格里消失", 6, Timetables.gdut.blockIndexOf(99))
+    fun gdutHasTwelvePeriodsInSixBlocks() {
+        // ★ 作息时间表只定义到第 12 节。学校课表页渲染的「第01节 … 第14节」14 行
+        //   是教务系统的**固定模板**，不是广工的作息（证据见 `Timetables.gdut` 的注释）。
+        assertEquals("12 节 = 6 个两节块", 6, Timetables.gdut.blockCount)
+        assertEquals(12, Timetables.gdut.maxPeriod)
+        assertEquals("第 11-12 节就在最后一行（块下标 5）", 5, Timetables.gdut.blockIndexOf(12))
+        assertEquals("越界的节次夹到最后一行，不让课从网格里消失", 5, Timetables.gdut.blockIndexOf(99))
     }
 
+    /**
+     * ★ 广工作息的要害：**块内两节的间隔不是固定的**。
+     *
+     * 第 1-2 节隔 5 分钟，第 7-8 节隔 15 分钟，第 9-10 节隔 **25** 分钟。
+     * 只靠一个统一的 `periodMinutes` 推，第 8 节会算成 16:15（实际 16:30）、
+     * 第 10 节会算成 18:05（实际 18:30）—— 课前提醒会早 15~25 分钟，
+     * 而且是把错时刻当事实显示。这几条断言钉的就是 `Block.secondStart` 真的生效了。
+     */
     @Test
-    fun gdutHasNoTimesSoNothingMayBeInvented() {
-        // ★ 广工这版**没有作息数据**：宁可整张表都没有时刻，也不编一个"9:00"出来 ——
-        //   编出来的时刻会以"看起来很确定"的样子骗人（"我第 1 节不是 9:00 啊"）
-        assertFalse("整张表都没有时刻", Timetables.gdut.hasTimes)
-        assertTrue("每个块的时刻都是空串", Timetables.gdut.blocks.all { it.start.isBlank() && it.end.isBlank() })
-        assertEquals("", Timetables.gdut.startOfPeriod(1))
-        assertEquals("", Timetables.gdut.endOfPeriod(1))
-        assertEquals("", Timetables.gdut.startOfBlock(0))
-        assertEquals("", Timetables.gdut.endOfBlock(6))
+    fun gdutUnevenBreaksAreExactForEveryPeriod() {
+        val expected = mapOf(
+            1 to ("8:30" to "9:15"),
+            2 to ("9:20" to "10:05"),
+            3 to ("10:25" to "11:10"),
+            4 to ("11:15" to "12:00"),
+            5 to ("13:50" to "14:35"),
+            6 to ("14:40" to "15:25"),
+            7 to ("15:30" to "16:15"),
+            8 to ("16:30" to "17:15"),
+            9 to ("17:20" to "18:05"),
+            10 to ("18:30" to "19:15"),
+            11 to ("19:20" to "20:05"),
+            12 to ("20:10" to "20:55"),
+        )
+        expected.forEach { (period, range) ->
+            assertEquals("第 $period 节的开始时刻", range.first, Timetables.gdut.startOfPeriod(period))
+            assertEquals("第 $period 节的结束时刻", range.second, Timetables.gdut.endOfPeriod(period))
+        }
+        assertTrue("整张表的时刻都收齐了", Timetables.gdut.hasTimes)
+        assertEquals("第 13 节不存在 → 空串，绝不编一个时刻", "", Timetables.gdut.startOfPeriod(13))
+    }
+
+    /**
+     * `secondStart` 是**可选**的：没给时仍按"块起点 + periodMinutes"推。
+     *
+     * 这条是给默认表（广软 / 金城，块内两节等长）兜底的 ——
+     * 加了新字段不能把老学校的时刻算歪。
+     */
+    @Test
+    fun secondStartIsOptionalAndFallsBackToPeriodMinutes() {
+        val derived = Timetable(
+            blocks = listOf(Timetable.Block("9:00", "10:20")),
+            periodMinutes = 40,
+        )
+        assertEquals("9:00", derived.startOfPeriod(1))
+        assertEquals("9:40", derived.startOfPeriod(2))
+
+        val explicit = Timetable(
+            blocks = listOf(Timetable.Block("8:30", "10:05", secondStart = "9:20")),
+            periodMinutes = 45,
+        )
+        assertEquals("8:30", explicit.startOfPeriod(1))
+        assertEquals("9:20", explicit.startOfPeriod(2))
+        assertEquals("9:15", explicit.endOfPeriod(1))
+        assertEquals("10:05", explicit.endOfPeriod(2))
     }
 
     @Test
     fun halfKnownTablesCountAsUnknown() {
-        // 半张表（有的块有时刻、有的没有）会让时间轴一半写时刻一半空着，看着像画错了；
-        // 而且"现在上到第几节"只要少一块就判不出来 → 一律当成"没有时刻表"
+        // 半张表在 `hasTimes` 上仍算"没有时刻表"（它是给"要不要显示时刻"这类整表判断用的）。
+        // 但**时间轴本身是逐行判断的**：有时刻的行照常写时刻，没时刻的行只写「第N-M节」——
+        // 所以"半张表"在界面上是如实画出来的，不会一半空着像画错。
         val half = Timetable(
             blocks = listOf(
                 Timetable.Block("9:00", "10:20"),
@@ -93,6 +135,8 @@ class TimetableTest {
             periodMinutes = 40,
         )
         assertFalse(half.hasTimes)
+        assertEquals("有时刻的那一行照常给时刻", "9:00", half.startOfPeriod(1))
+        assertEquals("没时刻的那一行给空串", "", half.startOfPeriod(3))
     }
 
     // ── 按学校选表 ────────────────────────────────────────────────────────
@@ -111,8 +155,8 @@ class TimetableTest {
     }
 
     @Test
-    fun gdutIsTheFourteenPeriodSchoolAndOthersKeepTheDefaultTable() {
-        assertSame("广工 = 14 节那张表", Timetables.gdut, Timetables.of("gdut"))
+    fun gdutIsTheTwelvePeriodSchoolAndOthersKeepTheDefaultTable() {
+        assertSame("广工 = 12 节那张表", Timetables.gdut, Timetables.of("gdut"))
         assertEquals(
             "学校自己声明的那张表才是权威（不要把表的来源换成另一处）",
             Timetables.gdut,
@@ -131,16 +175,21 @@ class TimetableTest {
     @Test
     fun courseRepositoryFollowsTheCurrentSchool() {
         withSchool("gdut") {
-            assertEquals("广工 14 节", 14, CourseRepository.MAX_PERIOD)
-            assertEquals("14 节 = 7 行", 7, CourseRepository.BLOCK_COUNT)
+            assertEquals("广工 12 节", 12, CourseRepository.MAX_PERIOD)
+            assertEquals("12 节 = 6 行", 6, CourseRepository.BLOCK_COUNT)
             assertEquals("第 1-2 节 = 第 1 行（0 起）", 0, CourseRepository.blockIndexOf(1))
-            assertEquals("第 13-14 节 = 第 7 行（0 起）", 6, CourseRepository.blockIndexOf(13))
-            assertEquals(6, CourseRepository.blockIndexOf(14))
-            assertEquals("第 15 节不存在（夹到第 14 节所在的行）", 6, CourseRepository.blockIndexOf(15))
-            assertEquals("没有作息 → 第 1 节的时刻是空串", "", CourseRepository.periodTime(1))
-            assertEquals("", CourseRepository.blockStartTime(0))
-            assertEquals("", CourseRepository.blockRangeLabel(0))
-            assertEquals("课程详情的「上课时间」也不该凭空多出时刻", "", CourseRepository.periodRangeLabel(1, 2))
+            assertEquals("第 11-12 节 = 第 6 行（0 起）", 5, CourseRepository.blockIndexOf(11))
+            assertEquals(5, CourseRepository.blockIndexOf(12))
+            assertEquals("第 13 节不存在（夹到第 12 节所在的行）", 5, CourseRepository.blockIndexOf(13))
+            // 作息已收录：时刻现在**推得出来**了（以前这里全是空串）
+            assertEquals("第 1 节 8:30", "8:30", CourseRepository.periodTime(1))
+            assertEquals("8:30", CourseRepository.blockStartTime(0))
+            assertEquals("8:30~10:05", CourseRepository.blockRangeLabel(0))
+            assertEquals(
+                "课程详情「上课时间」= 第一节开始 ~ 最后一节结束",
+                "8:30~10:05",
+                CourseRepository.periodRangeLabel(1, 2),
+            )
         }
     }
 
@@ -149,8 +198,8 @@ class TimetableTest {
         // 同一份数据、同一处调用：只因为"当前学校"不同，节数与时刻就不同 ——
         // 这正是"表按学校分"的全部意义（也是这条测试的存在理由）
         withSchool("gdut") {
-            assertEquals(14, CourseRepository.MAX_PERIOD)
-            assertEquals("", CourseRepository.periodTime(1))
+            assertEquals(12, CourseRepository.MAX_PERIOD)
+            assertEquals("8:30", CourseRepository.periodTime(1))
         }
         withSchool(null) {
             assertEquals(16, CourseRepository.MAX_PERIOD)

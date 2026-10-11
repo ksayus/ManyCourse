@@ -45,6 +45,7 @@ class CourseEntriesTest {
         name: String,
         weekday: Int,
         startPeriod: Int,
+        weeks: String = "",
     ) = Course(
         id = id,
         name = name,
@@ -53,7 +54,48 @@ class CourseEntriesTest {
         weekday = weekday,
         startPeriod = startPeriod,
         periodCount = 2,
+        weeks = weeks,
     )
+
+    /**
+     * ★ 本地兜底那条路**必须按周次串筛**（服务端按周返回的那条已经筛过了，不重复筛）。
+     *
+     * 本地课表是"整学期课表 + 一个周次串"：不筛的话，"只在第 2-4 周上的军训"
+     * 会被画满整个学期 —— 周次串在这之前只展示、不参与渲染。
+     */
+    @Test
+    fun localFallbackFiltersByTeachingWeek() {
+        val training = localCourse(1, "军训", weekday = 1, startPeriod = 1, weeks = "2-4周")
+        val always = localCourse(2, "高等数学", weekday = 1, startPeriod = 3, weeks = "1-16周")
+
+        fun names(week: Int?) = buildDayEntries(
+            weekCourses = null,
+            ownCourses = emptyList(),
+            localCourses = listOf(training, always),
+            allowLocalFallback = true,
+            week = week,
+        )?.map { it.name }
+
+        assertEquals("第 3 周：两门都在", listOf("军训", "高等数学"), names(3))
+        assertEquals("第 5 周：军训已经结束了", listOf("高等数学"), names(5))
+        assertEquals("不知道第几周 → 不过滤（宁可多列一门）", listOf("军训", "高等数学"), names(null))
+    }
+
+    /**
+     * 服务端按周返回的数据**已经筛过"这一周真的会上"**了，不许再按周次串筛第二遍 ——
+     * 多筛一道只会在服务端与我们的解析口径不一致时把课吃掉。
+     */
+    @Test
+    fun weekCoursesFromServerAreNotFilteredAgain() {
+        val entries = buildDayEntries(
+            weekCourses = listOf(schoolCourse("军训", weekday = 1, startPeriod = 1, weeks = "2-4周")),
+            ownCourses = emptyList(),
+            localCourses = emptyList(),
+            allowLocalFallback = true,
+            week = 9, // 第 9 周，按周次串算军训"不该上"
+        )
+        assertEquals("服务端说这周有，那就是有", listOf("军训"), entries?.map { it.name })
+    }
 
     @Test
     fun weekDataWinsAndIsSortedByPeriod() {

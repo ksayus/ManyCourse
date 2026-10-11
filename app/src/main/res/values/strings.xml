@@ -14,8 +14,54 @@
     <string name="login_page_captcha_hint">填得数</string>
     <string name="login_page_captcha_tip">请输入图片中算式的得数；答错会换一张新图</string>
     <string name="login_page_error_captcha">请输入验证码</string>
+    <string name="login_page_remember_password">记住密码</string>
+    <!-- 这一句是"记住密码"的代价说明，不是装饰：说清存哪儿、传不传、谁能用 -->
+    <string name="login_page_remember_password_hint">密码用本机密钥加密保存、不会上传；能解锁这台设备的人可以用它自动填充</string>
     <string name="debug_user_info">用户名: %1$s\n密码: %2$s</string>
     <string name="bottom_nav_menu_class_schedule">课表</string>
     <string name="bottom_nav_menu_calender">日历</string>
     <string name="bottom_nav_menu_self">我的</string>
+
+    <!-- ===== 桌面小组件（2x2「下一节课」）===== -->
+    <!--
+      ⚠️ 小组件的**显示名**（receiver 的 android:label）。
+
+      为什么必须有：小米小部件规范 §12.5 明确要求小米Widget 必须配名称，
+      在「小部件中心」里展示为「应用名·小部件名」。**没配 label 时会回落到应用名**，
+      于是列表里出现「课多多·课多多」这种既违反规范、又完全没说明用途的名字。
+
+      为什么不能和应用名相同：同样出自 §12.5 —— 名称的作用就是让用户分辨
+      "这个应用的小部件是干什么的"，与「课多多」重复等于没写。
+      2–8 个汉字，这里 4 个字。
+    -->
+    <string name="widget_next_class_label">下一节课</string>
+    <string name="widget_next_class_description">桌面上显示下一节要上的课，一眼看到教室和时间</string>
+    <!--
+      三种"没有课可显示"的状态必须分开写：它们对用户意味着完全不同的事。
+        · 没数据   = 还没登录 / 从没同步过（要用户去 App 里同步）
+        · 今天没了 = 有数据，但今天已经没有课了
+        · 正在上   = 这门课此刻就在上
+      混成一句"暂无课程"的话，用户分不清是课表空了还是 App 坏了。
+      名字行与状态行分开写是因为：名字行是 16sp 粗体（给课程名用的），
+      整句提示塞进去会折成两行、把 2x2 的格子撑得头重脚轻（真机截图里看出来的）。
+    -->
+    <string name="widget_no_data">没有课表数据</string>
+    <string name="widget_no_data_hint">打开 App 同步课表</string>
+    <string name="widget_no_more_today">今天的课都上完了</string>
+    <string name="widget_running">正在上课</string>
+    <string name="widget_today">今天</string>
+    <string name="widget_tomorrow">明天 %1$s</string>
+    <string name="widget_day_after">%1$s %2$s</string>
+    <!--
+      「还有 6 小时 18 分钟」/「还有 45 分钟」。
+      具体时长由 `data/NextClass.kt` 的 `formatDistance` 算好再传进来 ——
+      小时的量级必须自己说出来，不能让用户拿 378 分钟去除 60。
+    -->
+    <string name="widget_until_start">还有 %1$s</string>
+
+    <!-- ===== 课前提醒通知 ===== -->
+    <string name="reminder_channel_name">课前提醒</string>
+    <string name="reminder_channel_description">上课前提醒你下一节课的名字、时间和教室</string>
+    <string name="reminder_title_soon">还有 %1$d 分钟上课</string>
+    <string name="reminder_title_now">就要上课了</string>
 </resources>

@@ -81,6 +81,40 @@
     -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
 
+    <!--
+      ══════════════════ 课前提醒（下一节课的闹钟 + 通知）══════════════════
+
+      **POST_NOTIFICATIONS**：Android 13 起发通知的运行时权限（危险权限）。
+        不给的话"课前提醒"这项功能就是没有 —— 但它**不影响**课表、小组件、其余一切。
+        申请时机是**第一次进入主界面**（`ManyCourseMain.askNotificationPermissionOnce`）：
+        登录页还没登录时就会显示（用户可能只是打开看一眼学校列表），在那里弹窗没有任何上下文，
+        用户顺手点掉就再也拿不回来；主界面才是"他已经在用这个 App"的地方。
+        只问一次，被拒之后不再自动弹（改由设置页的「通知设置」卡片给可恢复的入口，
+        见 `notify/NotificationPermission.kt`）—— 而且 Android 13 起同一条权限拒两次后
+        系统就不再显示弹窗，反复申请只会表现为"点了没反应"。
+
+      **RECEIVE_BOOT_COMPLETED**：闹钟在重启后会被系统清空，必须开机重排
+        （见 `reminder/RescheduleReceiver.kt`）。这是普通权限，不弹窗。
+
+      **精确闹钟**：Android 12（API 31）起 `setExact*` 需要权限，否则抛 SecurityException。
+      两条都声明的理由：
+        - `USE_EXACT_ALARM`（API 33+）：**安装即得**，用户不用去系统设置里点任何东西。
+          代价是 Google Play 只允许"闹钟 / 日历"类应用申报它 —— 本应用是课表/日历，
+          且**通过 GitHub Releases 侧载分发**（见 README §9），所以可以接受；
+          与 MANAGE_EXTERNAL_STORAGE 是同一条取舍（要上架 Play 时这两条都得先去掉）。
+        - `SCHEDULE_EXACT_ALARM`（API 31/32）：那两代系统上 `USE_EXACT_ALARM` 还不存在，
+          靠它 + 用户授权。运行时用 `canScheduleExactAlarms()` 检测，
+          没授权就退化成不精确闹钟（`setAndAllowWhileIdle`），并在设置页如实写明精度。
+
+      ★ 提醒**刻意不做成前台服务 / 常驻通知**：一次课只需要一条闹钟，
+        触发完就排下一条（见 `reminder/ClassReminderScheduler.kt`），
+        这是最省电、也最不容易被系统杀的形式。
+    -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
+    <uses-permission android:name="android.permission.USE_EXACT_ALARM" />
+
     <application
         android:name=".ManyCourseApp"
         android:allowBackup="true"
@@ -112,6 +146,62 @@
             android:screenOrientation="portrait"
             android:windowSoftInputMode="adjustResize"
             tools:ignore="LockedOrientationActivity" />
+
+        <!--
+          ══════════════════ 课前提醒：闹钟与重排 ══════════════════
+        -->
+
+        <!--
+          闹钟到点后由它发通知，并发完立刻排下一条。
+          `exported="false"`：只有我们自己的 PendingIntent 能触发它，别的一概不能。
+        -->
+        <receiver
+            android:name=".reminder.ClassReminderReceiver"
+            android:exported="false" />
+
+        <!--
+          **重排入口**。闹钟是"一次性"的（排了就用掉），下面这几种情况都会让已排的闹钟作废，
+          必须重排一次：
+
+            · BOOT_COMPLETED        重启后系统清空所有闹钟
+            · TIME_SET              用户改了系统时间（或自动对时跳了一下）
+            · TIMEZONE_CHANGED      跨时区（"9:00 上课"说的是本地时间）
+            · MY_PACKAGE_REPLACED   应用被覆盖安装/更新，PendingIntent 可能失效
+
+          `exported="false"` 对这几条**照样收得到** —— 它们都是系统发的受保护广播，
+          系统组件不受 exported 限制，所以没必要为了收它们把 receiver 暴露给任意 App。
+
+          ★ 这几条**都不是唯一保障**：`ManyCourseApp.onCreate` 每次启动进程也会重排一次。
+            真机上万一某个 OEM 拦了开机广播，用户只要打开一次 App 就恢复了。
+        -->
+        <receiver
+            android:name=".reminder.RescheduleReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.TIME_SET" />
+                <action android:name="android.intent.action.TIMEZONE_CHANGED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
+
+        <!--
+          ══════════════════ 桌面小组件（2x2「下一节课」）══════════════════
+
+          小组件的更新广播由系统（AppWidgetService）发出，`exported="false"` 同样收得到；
+          布局与尺寸声明在 `res/xml/next_class_widget_info.xml`。
+        -->
+        <receiver
+            android:name=".widget.NextClassWidgetProvider"
+            android:exported="false"
+            android:label="@string/widget_next_class_label">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/next_class_widget_info" />
+        </receiver>
 
         <!--
           **自动更新要用 FileProvider 把 APK 交给系统安装器**。

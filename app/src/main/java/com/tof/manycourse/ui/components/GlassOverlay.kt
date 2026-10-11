@@ -28,7 +28,11 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import com.tof.manycourse.ui.enterOverlayFade
+import com.tof.manycourse.ui.enterOverlayOffset
 import com.tof.manycourse.ui.enterTween
+import com.tof.manycourse.ui.exitOverlayFade
+import com.tof.manycourse.ui.exitOverlayOffset
 import com.tof.manycourse.ui.exitTween
 import com.tof.manycourse.ui.rememberAnimationsEnabled
 import com.tof.manycourse.ui.theme.LocalGlassTokens
@@ -61,17 +65,21 @@ fun GlassOverlay(
     val scrimExit = remember(animations) {
         if (animations) fadeOut(exitTween()) else ExitTransition.None
     }
-    // 只做淡入 + 轻微位移，不做缩放：缩放会和阴影层叠加产生"跳一下"的观感
+    // 只做淡入 + 轻微位移，不做缩放：缩放会和阴影层叠加产生"跳一下"的观感。
+    // ★ 位移幅度（height/14 与 height/20）**一个字都没改**，换的只是缓动：
+    //   由 FastOutSlowIn 改成轻弹性，收尾多一点余韵。§2.5 只禁了缩放入场，没禁换缓动
     val panelEnter = remember(animations) {
         if (animations) {
-            fadeIn(enterTween()) + slideInVertically(enterTween()) { height -> height / 14 }
+            fadeIn(enterOverlayFade()) +
+                slideInVertically(enterOverlayOffset()) { height -> height / 14 }
         } else {
             EnterTransition.None
         }
     }
     val panelExit = remember(animations) {
         if (animations) {
-            fadeOut(exitTween()) + slideOutVertically(exitTween()) { height -> height / 20 }
+            fadeOut(exitOverlayFade()) +
+                slideOutVertically(exitOverlayOffset()) { height -> height / 20 }
         } else {
             ExitTransition.None
         }

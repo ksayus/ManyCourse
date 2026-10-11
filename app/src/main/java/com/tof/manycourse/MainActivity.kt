@@ -22,9 +22,12 @@ import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import androidx.core.view.updatePadding
+import com.google.android.material.button.MaterialButton
 import com.google.android.material.card.MaterialCardView
+import com.google.android.material.checkbox.MaterialCheckBox
 import com.google.android.material.textfield.MaterialAutoCompleteTextView
 import com.google.android.material.textfield.TextInputEditText
+import com.tof.manycourse.data.CredentialVault
 import com.tof.manycourse.data.LoginSettings
 import com.tof.manycourse.data.School
 import com.tof.manycourse.data.SessionStore
@@ -60,6 +63,9 @@ class MainActivity : ComponentActivity() {
     private lateinit var loginBtn: Button
     private lateinit var loginInfoText: TextView
     private lateinit var schoolAdapter: SchoolDropdownAdapter
+
+    /** 「记住密码」勾选框：勾选状态与"本机有没有存档"是同一件事，见 [setupRememberedPassword] */
+    private lateinit var rememberPassword: MaterialCheckBox
 
     /** 验证码区块（默认 gone）：只有学校返回 NeedCaptcha 时才显示 */
     private lateinit var captchaBlock: View
@@ -140,6 +146,7 @@ class MainActivity : ComponentActivity() {
         password = findViewById<TextInputEditText>(R.id.EditPassword)
         loginBtn = findViewById<Button>(R.id.login_button)
         loginInfoText = findViewById<TextView>(R.id.login_info_textView)
+        rememberPassword = findViewById(R.id.rememberPassword)
         captchaBlock = findViewById(R.id.captchaBlock)
         captchaTip = findViewById(R.id.captchaTip)
         captchaImage = findViewById(R.id.captchaImage)
@@ -158,7 +165,49 @@ class MainActivity : ComponentActivity() {
 
         setupSchoolPicker()
 
+        setupRememberedPassword()
+
         loginBtn.setOnClickListener { doLogin() }
+    }
+
+    // ── 记住密码 ────────────────────────────────────────────────────────────
+
+    /**
+     * 「记住密码」的装配：读本机那份加密存档 → 决定勾选框状态 → 自动填充。
+     *
+     * ## 勾选框的状态 = "本机有没有存档"
+     *
+     * 不复用一份单独的开关：**存了就是勾着、删了就是没勾**，两个状态永远一致，
+     * 不会出现"勾着但没有密码"或"没勾却还留着密文"。所以勾选框的初值直接来自
+     * [CredentialVault.load] 的结果。
+     *
+     * ## 取消勾选要**立刻**删
+     *
+     * 监听里当场 [CredentialVault.clear]（密文与 Keystore 里的密钥一起删），
+     * 而不是等下一次登录成功才删：用户点掉勾选框的那一刻，他的意思就是
+     * "把本机存的那份密码删掉"，拖到未来某个时刻才发生的话，
+     * 那台设备上就白白多躺着一份能登进教务系统的密码。
+     *
+     * ## 只自动填、不自动登录
+     *
+     * 理由写在 `data/CredentialVault.kt` 的类注释里（一句话：会话还在时根本走不到这一页，
+     * 而"替用户登录"会把失败与验证码这一整套反馈都藏起来）。
+     */
+    private fun setupRememberedPassword() {
+        CredentialVault.attach(this)
+
+        // 读不出来（没存过 / 密钥被系统作废）就是 null，勾选框保持未勾选 ——
+        // 这是"记住密码"必须**默认关闭**的那条线
+        val remembered = CredentialVault.load()
+        rememberPassword.isChecked = remembered != null
+        rememberPassword.setOnCheckedChangeListener { _, checked ->
+            if (!checked) CredentialVault.clear()
+        }
+
+        if (remembered != null) {
+            username.setText(remembered.account)
+            password.setText(remembered.password)
+        }
     }
 
     // ── 选择学校 ────────────────────────────────────────────────────────────
@@ -252,7 +301,9 @@ class MainActivity : ComponentActivity() {
         // 本地调试账号：不联网直接进主界面。保留原有调试通路（改 UI 时不用每次都连教务系统），
         // TODO(发布前): 正式发版前删掉这段，或者用 BuildConfig.DEBUG 包起来。
         if (account == DEBUG_ACCOUNT && pwd == DEBUG_PASSWORD) {
-            onLoginSuccess(getString(R.string.login_page_login_success_local), account, localDebug = true)
+            // 本地调试账号不落「记住密码」：那对本地占位账号毫无意义，
+            // 存下来只会让"本机有一份能登教务系统的密码"这句话不再成立
+            onLoginSuccess(getString(R.string.login_page_login_success_local), account, localDebug = true, password = null)
             return
         }
 
@@ -274,7 +325,7 @@ class MainActivity : ComponentActivity() {
                 setLoading(false)
                 when (result) {
                     is LoginResult.Success ->
-                        onLoginSuccess(result.message, account, localDebug = false)
+                        onLoginSuccess(result.message, account, localDebug = false, password = pwd)
                     is LoginResult.NeedCaptcha -> showCaptcha(result)
                     is LoginResult.Failure -> {
                         // 失败时把验证码收起来：下次点登录会重新取一张新图，
@@ -339,8 +390,13 @@ class MainActivity : ComponentActivity() {
      * 那一次同步就会因为"没有登录账号"直接失败。
      *
      * `SessionStore.onLogin` 会把 Cookie 会话加密后存盘 —— 这就是"下次打开不用再登"的来源。
+     *
+     * @param password 刚验证通过的那个密码；**只在登录成功的这一刻**才有值。
+     *   勾了「记住密码」就把它加密存下来，没勾就把本机那份删掉 ——
+     *   存下来的必须是**验证过**的账号密码，否则下次自动填进去的是一份错的
+     *   （所以这里刻意不在 `doLogin` 一开始就存）。
      */
-    private fun onLoginSuccess(message: String, account: String, localDebug: Boolean) {
+    private fun onLoginSuccess(message: String, account: String, localDebug: Boolean, password: String?) {
         setLoading(false)
         hideCaptcha()
         SessionStore.onLogin(
@@ -348,6 +404,16 @@ class MainActivity : ComponentActivity() {
             userAccount = account,
             localDebug = localDebug,
         )
+        if (password != null) {
+            if (rememberPassword.isChecked) {
+                CredentialVault.save(account, password)
+            } else {
+                // 勾选框是"用户明确要求记住"的唯一凭据：没勾就等于"不要在本机留密码"，
+                // 这时要把**上一次**留下的那份删干净（勾选框的监听只管本次点击，
+                // 管不到"上次勾着、这次进来时已经是没勾"的情形）
+                CredentialVault.clear()
+            }
+        }
         loginInfoText.setTextColor(ContextCompat.getColor(this, R.color.login_info_ok))
         loginInfoText.text = message
         startActivity(Intent(this, ManyCourseMain::class.java))

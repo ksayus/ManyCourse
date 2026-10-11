@@ -284,6 +284,36 @@
                 </com.google.android.material.textfield.TextInputLayout>
 
                 <!--
+                  「记住密码」：默认**不勾**（用户显式勾了才存），勾选状态与"本机有没有存档"
+                  是同一件事 —— 所以它由 MainActivity 读 CredentialVault 之后设置，
+                  不在这里写 android:checked。
+
+                  密文与密钥的存放、取消勾选时的删除、以及"能解锁设备的人可以用它自动填充"
+                  这条代价，都写在 `data/CredentialVault.kt` 与下面那句提示里。
+                  提示那一句是**必须**的：只说"记住密码"会把代价藏起来。
+                -->
+                <com.google.android.material.checkbox.MaterialCheckBox
+                    android:id="@+id/rememberPassword"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="10dp"
+                    android:minHeight="0dp"
+                    android:paddingTop="4dp"
+                    android:paddingBottom="4dp"
+                    android:text="@string/login_page_remember_password"
+                    android:textColor="@color/login_field_text"
+                    android:textSize="14sp" />
+
+                <TextView
+                    android:id="@+id/rememberPasswordHint"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:lineSpacingExtra="2dp"
+                    android:text="@string/login_page_remember_password_hint"
+                    android:textColor="@color/login_field_hint"
+                    android:textSize="12sp" />
+
+                <!--
                   验证码区块（默认隐藏，android:visibility="gone"）。
 
                   为什么需要它：广州软件学院的统一身份认证对**每一次**账号密码登录都要求填验证码，
