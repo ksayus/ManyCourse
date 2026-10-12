@@ -66,6 +66,12 @@ android {
 
             else -> create("release") {
                 storeFile = storeFileResolved
+                // 密钥类型从外部给（CI 用 keytool 问出来的），不靠扩展名猜：
+                // "JKS 内容 + .p12 文件名" 猜错的报错长得像密码错，很容易查偏。
+                // 不传时保持 AGP 的默认推断（本地用 debug.keystore 就不传）。
+                providers.gradleProperty("manycourse.storeType").orNull
+                    ?.takeIf { it.isNotBlank() }
+                    ?.let { storeType = it }
                 storePassword = providers.gradleProperty("manycourse.storePassword").orNull
                 keyAlias = providers.gradleProperty("manycourse.keyAlias").orNull
                 keyPassword = providers.gradleProperty("manycourse.keyPassword").orNull

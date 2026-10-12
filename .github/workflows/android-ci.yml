@@ -236,12 +236,28 @@ jobs:
             echo "signed=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          echo "$KEY_STORE_BASE64" | base64 --decode > release.p12
+          echo "$KEY_STORE_BASE64" | base64 --decode > release.keystore
+
+          # 密钥**类型**必须问出来，不能靠文件扩展名猜。
+          # AGP 按扩展名推断 storeType（.p12 会被当成 PKCS12），可现实里
+          # 「内容是 JKS、文件名却是 .p12」非常常见（旧版 keytool 默认就是 JKS）。
+          # 猜错时的报错是 `Keystore was tampered with, or password was incorrect`，
+          # 看着像密码填错了，其实是类型不对 —— 很容易把排查方向带偏。
+          STORE_TYPE=$(keytool -list -keystore release.keystore -storepass "$STORE_PASSWORD" 2>/dev/null \
+            | sed -n 's/^Keystore type: *//p' | head -n1)
+          if [ -z "$STORE_TYPE" ]; then
+            echo "::error::读不出密钥类型（keytool 失败）。请核对 SIGNING_KEY_STORE_BASE64 与 SIGNING_STORE_PASSWORD；下面是 keytool 的原始输出。"
+            keytool -list -keystore release.keystore -storepass "$STORE_PASSWORD" || true
+            exit 1
+          fi
+          echo "签名密钥类型：$STORE_TYPE"
+
           # 密钥信息写进 GRADLE_USER_HOME 下的 gradle.properties ——
           # Gradle 会自动加载这个文件，签名配置直接就能读到（不用改命令行参数）
           mkdir -p "$HOME/.gradle"
           {
-            echo "manycourse.storeFile=$GITHUB_WORKSPACE/release.p12"
+            echo "manycourse.storeFile=$GITHUB_WORKSPACE/release.keystore"
+            echo "manycourse.storeType=$STORE_TYPE"
             echo "manycourse.storePassword=$STORE_PASSWORD"
             echo "manycourse.keyAlias=$KEY_ALIAS"
             echo "manycourse.keyPassword=$KEY_PASSWORD"
@@ -298,7 +314,7 @@ jobs:
       - name: Clean up signing key
         if: always()
         run: |
-          rm -f release.p12
+          rm -f release.keystore
           rm -f "$HOME/.gradle/gradle.properties"
 
       - name: Publish GitHub Release
