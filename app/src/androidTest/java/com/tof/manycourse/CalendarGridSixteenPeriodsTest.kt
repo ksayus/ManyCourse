@@ -1,4 +1,4 @@
-﻿package com.tof.manycourse
+package com.tof.manycourse
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
@@ -17,6 +17,11 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.tof.manycourse.data.CourseRepository
 import com.tof.manycourse.ui.CalendarGridLayout
 import com.tof.manycourse.ui.contrastRatio
+import com.tof.manycourse.ui.courseCardDimFill
+import com.tof.manycourse.ui.courseCardFill
+import com.tof.manycourse.ui.gridCardTextColor
+import com.tof.manycourse.ui.relativeLuminance
+import com.tof.manycourse.ui.theme.LightColorScheme
 import com.tof.manycourse.ui.theme.ManyCourseTheme
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -28,26 +33,22 @@ import org.junit.runner.RunWith
 import java.time.LocalDate
 
 /**
- * **16 节 / 8 块**下，周视图真的画出了 8 行、而且每行都是课程色块（真机 / 模拟器）。
+ * **16 节 / 8 块**下，周视图真的画出了 8 行、而且每行都是**浅色系**课程色块（真机 / 模拟器）。
  *
  * ## 为什么要有这条（而不是只靠 JVM 单测）
  *
- * JVM 单测能证明 [com.tof.manycourse.ui.gridRowCount] 算出 8、行标签是 `1-2节`……，
- * 但**证明不了"画出来是那个样子"**：行高是不是真的按 8 行等分、卡片有没有被裁、
- * 底色是不是课程色 —— 这些只有在真正渲染一遍、再把像素读回来才能确认。
+ * JVM 单测能证明 `gridRowCount` 算出 8、行标签是 `1-2节`、`courseCardFill` 算出来的颜色
+ * 压得住深字……，但**证明不了"画出来是那个样子"**：行高是不是真的按 8 行等分、卡片有没有被裁、
+ * **屏幕上真正的底色**是不是浅色、字是不是深色 —— 这些只有在真正渲染一遍、
+ * 再把像素读回来才能确认。
+ *
+ * ★ 尤其是"渲染出来的底色 ≠ 算出来的色"这件事：卡片外面还裹着静态玻璃表面
+ * （高光 / 描边 / 内阴影），而**读不读得清取决于屏幕上那个颜色**。
+ * 所以这里的对比度是**两个都从像素里量**：这一行的主色（卡片底）与这一行最深的那些像素
+ * （文字笔画）—— 而不是拿我们算出来的 `courseCardFill` 去对 `gridCardTextColor`。
  *
  * ★ 它跑在本机（`adb shell am instrument`），**不是** `connectedAndroidTest`：
  * 目标机的测试 APK 装不上，所以这个用例保留成"手动插桩"的手法。
- *
- * ## 它验了什么
- *
- * 1. **一屏 8 行**：时间轴上 `1-2节` … `15-16节` 八行都在（`onNodeWithText` 逐个断言），
- *    说明 16 节确实被折成 8 个块、而且没有一行掉到屏幕外；
- * 2. **行高是等分的、每行都是课程色块**：把整棵 Compose 树的像素读回来，先按像素找出
- *    "深色色块"的 8 条行带，断言它们**等高、等间距**（实测每行 214px、间距 12px），
- *    再逐行量"白字压在这个**渲染出来的**底色上"的对比度（实测最差 **8.31**，
- *    WCAG AA 小字门槛是 4.5）；
- * 3. 顺带把整屏截图写到应用私有目录的 `manycourse-8blocks.png`，人可以直接看。
  */
 @RunWith(AndroidJUnit4::class)
 @Suppress("DEPRECATION")
@@ -93,13 +94,15 @@ class CalendarGridSixteenPeriodsTest {
     }
 
     @Test
-    fun sixteenPeriodsAreDrawnAsEightTwoPeriodBlocksWithFilledCards() {
+    fun sixteenPeriodsAreDrawnAsEightTwoPeriodBlocksWithLightFilledCards() {
         // 用真实学校表（默认 16 节 / 8 块）算一遍，先把"要验什么"钉在数据上
         assertEquals("默认表应该是 16 节", 16, CourseRepository.MAX_PERIOD)
         assertEquals("默认表应该是 8 个两节块", 8, CourseRepository.BLOCK_COUNT)
 
         composeRule.setContent {
-            ManyCourseTheme {
+            // 强制浅色主题：卡片的灰卡底按当前**色板**取（isDarkColorScheme），
+            // 所以这里指定的主题就是卡片真正用的那一套
+            ManyCourseTheme(darkTheme = false) {
                 Box(Modifier.fillMaxSize().background(Color.White).padding(8.dp)) {
                     CalendarGridLayout(
                         weekStart = monday,
@@ -125,104 +128,115 @@ class CalendarGridSixteenPeriodsTest {
         composeRule.onNodeWithText("9:00").assertExists()
         composeRule.onNodeWithText("21:50").assertExists()
 
-        // ② 把像素读回来：8 个行带里各找一次"这一行课程的压深色"
+        // ② 把像素读回来：找出 8 条**浅色彩块**的行带
         val image = composeRule.onRoot().captureToImage()
         val pixels = image.toPixelMap()
         val width = pixels.width
         val height = pixels.height
         assertTrue("截图尺寸异常：${width}x$height", width > 100 && height > 400)
-        println("【16节/8块】渲染分辨率 ${width}x${height}（行高约 ${height / 8}px）")
+        println("【16节/8块】渲染分辨率 ${width}x$height（行高约 ${height / 8}px）")
 
         val rowHeight = height / 8f
-        // 这一屏到底有些什么颜色：**放进断言消息里**（插桩测试的 stdout 不进报告，
-        // 只有失败消息一定会被带回来 —— 这正是排查时最需要的那半张图）
-        val hist = HashMap<Int, Int>()
+        // ★ 判据换成了"浅色 + 有彩度"：卡片是浅底彩块（深字），不是上一版的深色块。
+        //   灰卡（近中性的浅灰）与页面底/玻璃卡面（近白）都因为没有彩度被排除在外
+        val lightRows = BooleanArray(height)
         run {
             var y = 0
             while (y < height) {
                 var x = 0
                 while (x < width) {
                     val c = pixels[x, y]
-                    val key = ((c.red * 255).toInt() shl 16) or
-                        ((c.green * 255).toInt() shl 8) or (c.blue * 255).toInt()
-                    hist[key] = (hist[key] ?: 0) + 1
-                    x += 2
-                }
-                y += 2
-            }
-        }
-        val top = hist.entries.sortedByDescending { it.value }.take(20)
-            .joinToString(" ") { "#%06X×%d".format(it.key, it.value) }
-
-        // ★ 量的是**渲染出来的**像素，不是我们算出来的那个色：
-        //   卡片外面还裹着静态玻璃表面（高光/描边/内阴影），实测渲染色比
-        //   `courseCardFill` 更暗（#21498A → #153870）。既然"读不读得清"取决于
-        //   屏幕上真正的那个颜色，断言就必须落在它上面。
-        // 先找出"深色色块"在竖直方向上的**真实分布**：网格不是从 y=0 开始的
-        // （上面还有周次滑块、图例、星期表头），所以不能拿 height/8 当行边界
-        val darkRows = BooleanArray(height)
-        run {
-            var y = 0
-            while (y < height) {
-                var x = 0
-                while (x < width) {
-                    val c = pixels[x, y]
-                    val r = (c.red * 255).toInt(); val g = (c.green * 255).toInt(); val b = (c.blue * 255).toInt()
-                    if (maxOf(r, g, b) - minOf(r, g, b) >= 40 && (r + g + b) / 3 <= 120) darkRows[y] = true
-                    x += 2
+                    val r = (c.red * 255).toInt()
+                    val g = (c.green * 255).toInt()
+                    val b = (c.blue * 255).toInt()
+                    if (maxOf(r, g, b) - minOf(r, g, b) >= 30 && (r + g + b) / 3 >= 140) {
+                        lightRows[y] = true
+                    }
+                    x += 1
                 }
                 y += 1
             }
         }
         val bands = buildList {
             var start = -1
-            darkRows.forEachIndexed { y, on ->
+            lightRows.forEachIndexed { y, on ->
                 if (on && start < 0) start = y
-                if (!on && start >= 0) { add(start to y); start = -1 }
+                if (!on && start >= 0) {
+                    add(start to y)
+                    start = -1
+                }
             }
             if (start >= 0) add(start to height)
         }.filter { it.second - it.first > 10 }
-        // 卡片自己那 8 条：最下面的第 9 条是「+ 添加」那个蓝色按钮，不是卡片
-        // （宽度远小于整行 —— 用高度把两者分开，卡片行带高约等于行高）
         val cardBands = bands.filter { it.second - it.first > rowHeight * 0.5f }
         val bandText = bands.joinToString(" ") { "${it.first}..${it.second}" }
         assertEquals(
-            "深色卡片行带的数量应该正好是 8（16 节 = 8 个两节块）。实际 ${bands.size} 段：$bandText；" +
-                "其中够高的 ${cardBands.size} 段；这一屏最多的颜色：$top",
+            "浅色彩块行带的数量应该正好是 8（16 节 = 8 个两节块）。实际 ${bands.size} 段：$bandText；" +
+                "其中够高的 ${cardBands.size} 段",
             8,
             cardBands.size,
         )
         // 8 条行带的高度必须几乎一致 —— "行高恒等于可用高度 ÷ 行数"就是靠这一条成立的
         val heights = cardBands.map { it.second - it.first }
-        val minH = heights.min()
-        val maxH = heights.max()
         assertTrue(
-            "8 行的行高必须一致（实际 $heights），差 ${maxH - minH}px 说明不是等分",
-            maxH - minH <= 6,
+            "8 行的行高必须一致（实际 $heights），差 ${heights.max() - heights.min()}px 说明不是等分",
+            heights.max() - heights.min() <= 6,
         )
         // 相邻两条之间的间隔也必须一致（网格线间距 = 行高，没有"多挤一行"）
         val gaps = cardBands.zipWithNext { a, b -> b.first - a.second }
         assertTrue("行与行之间的间隔必须一致（实际 $gaps）", gaps.max() - gaps.min() <= 6)
 
-        injected.forEachIndexed { row, (_, start, _) ->
+        // ③ 逐行量**屏幕上真实那个底色 + 真实那些字**的对比度
+        val expectedText = gridCardTextColor(LightColorScheme)
+        val dimFill = courseCardDimFill(dark = false)
+        val expectedFills = injected.map { CourseRepository.colorOfName(it.first) }.map(::courseCardFill)
+        injected.forEachIndexed { row, (name, start, _) ->
             val (y0, y1) = cardBands[row]
-            val band = rowBand(pixels, width, y0, y1)
-            val fill = band.worstFill
-            val ratio = if (fill == null) 0.0 else contrastRatio(fill, Color.White)
-            val measured = if (fill == null) "（这一行没找到深色块）" else
-                "#%06X 白字 %.2f".format(
-                    ((fill.red * 255).toInt() shl 16) or
-                        ((fill.green * 255).toInt() shl 8) or (fill.blue * 255).toInt(),
-                    ratio,
+            val band = scanBand(pixels, width, y0, y1)
+            val fill = band.fill
+            val text = band.text
+            val measured = if (fill == null) {
+                "（这一行没找到浅色彩块）"
+            } else {
+                "#%06X 亮度 %.3f，最深的字 #%06X，实测对比度 %s".format(
+                    argb(fill),
+                    relativeLuminance(fill),
+                    text?.let(::argb) ?: 0,
+                    text?.let { "%.2f".format(contrastRatio(fill, it)) } ?: "（没找到深色笔画）",
                 )
+            }
             assertTrue(
-                "第 ${row + 1} 行（第 $start 节起）的课程色块不该看不出来：$measured" +
-                    "；这一屏最多的颜色：$top",
-                fill != null && ratio >= 4.5,
+                "第 ${row + 1} 行（第 $start 节起，「$name」）的卡片应当是**浅色块 + 深色字**：$measured",
+                fill != null &&
+                    text != null &&
+                    relativeLuminance(fill) >= 0.35 &&
+                    relativeLuminance(text) < relativeLuminance(fill) &&
+                    contrastRatio(fill, text) >= 4.5,
+            )
+            // 卡片底与"算出来的那个色"对得上（差得远说明画错了底色 / 被玻璃盖住了）
+            assertTrue(
+                "第 ${row + 1} 行的实测底色 $fill 与算出来的 ${expectedFills[row]} 差得太远",
+                contrastRatio(fill!!, expectedFills[row]) <= 1.35 ||
+                    kotlin.math.abs(relativeLuminance(fill) - relativeLuminance(expectedFills[row])) <= 0.08,
+            )
+            // 也顺便确认这张卡**不是**灰卡（8 门课都排在本周，应该全亮）。
+            // 判据与 JVM 那条一致：对比度 ≥1.20 **或**亮度差 ≥0.05 ——
+            // 最亮的琥珀（#FACE85）与浅灰卡只差 1.147 / 0.105，走的是第二支
+            assertTrue(
+                "第 ${row + 1} 行的底色与灰卡底 $dimFill 看起来会是同一张卡" +
+                    "（实测 $fill）",
+                contrastRatio(fill, dimFill) >= 1.20 ||
+                    kotlin.math.abs(relativeLuminance(fill) - relativeLuminance(dimFill)) >= 0.05,
             )
         }
+        // 字色（从像素里量到的那支）应当与色板角色算出来的一致（允许抗锯齿带来的偏差）
+        val firstText = cardBands.first().let { (y0, y1) -> scanBand(pixels, width, y0, y1).text }
+        assertTrue(
+            "屏幕上的字色 $firstText 与色板角色算出来的 $expectedText 应当是一支（实测像素会有抗锯齿偏差）",
+            firstText != null && contrastRatio(firstText, expectedText) <= 1.30,
+        )
 
-        // ③ 落一张截图（人可以直接看）——写到应用自己的 files 目录：
+        // ④ 落一张截图（人可以直接看）——写到应用自己的 files 目录：
         //    Android 11+ 的分区存储不允许直接写 /sdcard 根，写里面会静默失败
         runCatching {
             val file = java.io.File(
@@ -238,21 +252,20 @@ class CalendarGridSixteenPeriodsTest {
     }
 
     /**
-     * 某一行里"最像课程色块"的那个像素。
+     * 一条行带里"卡片的底色"与"文字笔画的颜色"。
      *
-     * 挑法：在这条行带里找**饱和度足够高、又足够暗**（白字压得住）的像素，
-     * 取其中出现次数最多的那个 —— 用"出现最多"而不是"最暗"，是为了避开文字笔画
-     * 与抗锯齿边缘（那些是离群值，数量少）。
-     *
-     * @return null = 这一行里根本没有"深色高饱和块"（说明卡片没画出来）
+     * 挑法：底色取**出现次数最多**的"浅色 + 有彩度"像素（避开文字笔画与抗锯齿边缘，
+     * 那些是离群值、数量少）；字色取出现次数最多的**深色**像素（文字笔画的主体，
+     * 不是抗锯齿的过渡色）。
      */
-    private fun rowBand(
+    private fun scanBand(
         pixels: androidx.compose.ui.graphics.PixelMap,
         width: Int,
         y0: Int,
         y1: Int,
     ): Band {
-        val hist = HashMap<Int, Int>()
+        val fills = HashMap<Int, Int>()
+        val texts = HashMap<Int, Int>()
         var y = y0
         while (y < y1) {
             var x = 0
@@ -262,18 +275,27 @@ class CalendarGridSixteenPeriodsTest {
                 val g = (c.green * 255).toInt()
                 val b = (c.blue * 255).toInt()
                 val sat = maxOf(r, g, b) - minOf(r, g, b)
-                // "深色块"的判据：有彩度（不是灰底）+ 够暗（白字能到 4.5）
-                if (sat >= 40 && (r + g + b) / 3 <= 120) {
-                    val key = (r shl 16) or (g shl 8) or b
-                    hist[key] = (hist[key] ?: 0) + 1
+                val mean = (r + g + b) / 3
+                val key = (r shl 16) or (g shl 8) or b
+                if (sat >= 30 && mean >= 140) {
+                    fills[key] = (fills[key] ?: 0) + 1
+                } else if (mean <= 90) {
+                    texts[key] = (texts[key] ?: 0) + 1
                 }
                 x += 1
             }
-            y += 2
+            y += 1
         }
-        val key = hist.maxByOrNull { it.value }?.key ?: return Band(null)
-        return Band(Color(0xFF000000.toInt() or key))
+        return Band(
+            fill = fills.maxByOrNull { it.value }?.key?.let { Color(0xFF000000.toInt() or it) },
+            text = texts.maxByOrNull { it.value }?.key?.let { Color(0xFF000000.toInt() or it) },
+        )
     }
 
-    private data class Band(val worstFill: Color?)
+    private fun argb(color: Color): Int =
+        (((color.red * 255).toInt() and 0xFF) shl 16) or
+            (((color.green * 255).toInt() and 0xFF) shl 8) or
+            ((color.blue * 255).toInt() and 0xFF)
+
+    private data class Band(val fill: Color?, val text: Color?)
 }

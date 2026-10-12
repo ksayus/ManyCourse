@@ -11,7 +11,6 @@ import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -27,6 +26,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.ColorScheme
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Slider
@@ -56,6 +56,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.TextUnit
@@ -299,116 +300,141 @@ private val SwipeWeekThreshold = 56.dp
  */
 private const val CardStateLegend = "亮 = 本周会上 · 灰 = 本周不上 · 左右滑动换周"
 
-// ══════════════════ 卡片面貌：填充色块 + 白字（对齐参考图） ══════════════════
+// ══════════════════ 卡片面貌：浅色系色块 + 深色字 ══════════════════
 //
 // ★ 这一段只有一个取舍，写在最前面（`GridCardContrastTest` 把这套数逐条钉住）。
 //
-// ## 一、亮卡的底色必须"压一档"，否则白字没有一个课程色配得上
+// ## 一、亮卡底 = 课程色往**白**里拉一档（浅底彩卡）
 //
-// 参考图的卡片是**填充色块 + 白字**，而课程色令牌（`CourseDotColors`）原本是给
-// 圆点/色条用的 500 档高饱和色。白字压在原色上的 WCAG 对比度实测：
+// 课程色令牌（`CourseDotColors`）是给圆点/色条用的 500 档高饱和色，直接当色块太沉
+// （上一版是把它压深到近乎墨色再配白字，用户反馈"太暗"）。这一版往**白**里拉
+// [CardFillLighten]：同一个混色公式，五门课一视同仁 —— 没有为哪一门课另配调色板。
 //
-// | 色 | 原色 | 配白字 | 压 44% 后 | 配白字 |
-// |---|---|---|---|---|
-// | blue/emerald/amber/rose/sky 500 | `#3B82F6` … `#0EA5E9` | **2.15 ~ 3.68**（全部不达标） | `#21498A` … | **6.0 ~ 8.9** |
+// | 课程色 | 原色 | 亮卡底（混 50% 白） | 深字对比度 |
+// |---|---|---|---|
+// | blue | `#3B82F6` | `#9DC0FA` | 9.7 |
+// | emerald | `#10B981` | `#88DCC0` | 11.1 |
+// | amber | `#F59E0B` | `#FACE85` | 12.1 |
+// | rose | `#F43F5E` | `#FA9FAE` | 9.0 |
+// | sky | `#0EA5E9` | `#86D2F4` | 10.7 |
 //
-// 压深用的是"课程色 + 近黑"的**同一个混色公式**，五门课一视同仁 —— 没有为任何一门课换
-// 调色板，只是把"色块"这一种用法定下来。副产品是更像参考图：参考图那几张卡的实测像素
-// （`#2F5876` / `#167360` / `#6E4705`）正是 500 档压深之后的量级。
+// ## 二、字色是**深色的常数** —— 换周插值的每一帧都读得清
 //
-// ## 二、字色是**纯白**、而且是常数 —— 换周时只有底色在动
+// 这件事上一版做不到：那时为了给**白字**凑对比度，亮卡底只能压得很深，灰卡也只能
+// 跟着做成深色（`#6A6F7B`），于是"灰卡是浅色"就没了。极性翻过来（浅底 + 深字）之后
+// 灰卡与亮卡**都在浅色这一侧**，字色因此可以完全与面貌无关：它只认色板角色
+// （[gridCardTextColor]），不看换周进度 `face`。
 //
-// 这一条是"任何一帧都读得清"的关键，也是本轮改了三版才定下来的地方：
+//  1. 如果让**字色跟着底色一起插值**，中间必然有一帧两者亮度相等 —— 那一帧对比度
+//     **恒等于 1.0**（上一版实测五门课在渐变中段都掉到 1.5，表现是"换周时课名先糊掉、
+//     再重新出现"）；
+//  2. 浅底之间的插值整条路径都还在浅色区间里，深字的对比度因此**只升不降**，
+//     最低点就是路径上较暗的那一端（实测最低 7.0，门槛是 4.5）。
 //
-//  1. 灰卡与亮卡的底色一浅一深。如果让**字色跟着底色一起插值**，中间必然有一帧
-//     两者亮度相等 —— 那一帧对比度**恒等于 1.0**（实测那一版五门课在渐变中段都掉到
-//     1.5，表现是"换周时课名先糊掉、再重新出现"）；
-//  2. 那么"每帧按对比度现算一支字色"行不行？也不行：灰卡是浅底深字、亮卡是深底白字，
-//     两者要求相反，而**中间必然经过一条"深字与白字都刚够 4.5"的缝**
-//     （实测那样写出来只有 4.24，够不到 4.5）；
-//  3. 唯一能让"字色恒定 + 整条路径都达标"成立的办法是：**把灰卡也做成深色**。
-//     于是白字在灰卡与亮卡上都达标，底色单调变深，对比度只升不降。
+// ## 三、两个主题都是浅底深字；"灰卡更不显眼"的手段各不同
 //
-// 代价如实写在这里：浅色主题下"这一周不上"的灰卡**不再是浅色**，而是一块中等偏深的
-// 中性色（`#6A6F7B`）。它仍然是"淡"的（低饱和的中性色 vs 亮卡的饱和课程色），
-// 但不再是上一版那种近乎透明的浅灰。**"填充色块 + 白字"与"灰卡是浅色"在 WCAG AA 下
-// 不可兼得** —— 这是本轮唯一一处为了可读性而改观感的地方。
+// 亮卡底**两个主题一样**（卡片是一块浅色表面，字色才有唯一的常数取值）。
+// 灰卡则按主题取不同的灰 —— 因为"不显眼"在两个主题里是相反的方向：
 //
-// 实测（五个课程色取最差的一个）：
+// | 主题 | 灰卡底 | 与亮卡的关系 | 深字对比度 |
+// |---|---|---|---|
+// | 浅色 | `#E2E3E5`（浅灰） | 比亮卡更**淡** | 13.9 |
+// | 深色 | `#ADB0B7`（中灰） | 比亮卡更**沉** | 8.2 |
 //
-// | 主题 | 灰卡底 | 亮卡底 | 字色 | 灰卡端 | 亮卡端 | 渐变最低点 |
-// |---|---|---|---|---|---|---|
-// | 浅色 | `#6A6F7B` | 课程色 ×0.56 | 白 | 5.0 | 6.0 | 5.0 |
-// | 深色 | `#080C15` | 课程色 ×0.56 | 白 | 19.6 | 6.0 | 6.0 |
-
-/** 亮卡底 = 课程色混 44% 近黑（压深之后白字才读得清）*/
-private const val CardFillDarken = 0.44f
-
-/** 地点带在卡底上再叠多少近黑（同色系更沉，参考图里那条地点带就是这么来的）*/
-private const val RoomBandOverlay = 0.22f
-
-/** 浅色主题：灰卡底 = 近黑 62% 叠在白色页面上（深到承得住白字，见本节第二条取舍）*/
-private const val DimFillAlphaLight = 0.62f
-
-/** 深色主题：灰卡底 = 近黑 50% 叠在深色页面上（比页面底更沉，卡片才有边界）*/
-private const val DimFillAlphaDark = 0.50f
-
-/** 深色主题下灰卡的描边：比灰卡底亮一档，把卡片从页面底上划出来 */
-private const val DimOutlineAlphaDark = 0.55f
+// ★ 深色主题下亮卡底**刻意不压深**：一旦亮卡在深色主题里变成深底，它就得配白字，
+// 字色不再是常数，换周渐变又会撞上"中段亮度相等"那条死路。这是一处**为了可读性与
+// 动效正确性而放弃"深色主题就该深底"惯例**的取舍，如实写在这里。
 
 /**
- * 页面的"基准底色"：合成灰卡底、量对比度时压的那一层（**对外可见**，单测读它）。
+ * 亮卡底往白里拉的比例（纯函数，单测钉住）。
  *
- * 与 `ColorScheme.background` 取值一致（浅色纯白 / 深色 `#0F172A`），
- * 但**不读 `MaterialTheme`** —— 这一节的颜色纯函数要能在 JVM 单测里直接调用，
- * 不能依赖组合环境。
+ * 0.50 = 课程色只留一半饱和度：再小就回到"深色系"（用户否掉的那一版），再大则五门课
+ * 看起来都差不多（色相还在，但辨识度差）。这个值同时让最亮的课程色（琥珀 `#FACE85`）
+ * 与灰卡之间留出 0.105 的亮度差 —— 见 [courseCardDimFill]。
  */
-internal fun pageBase(dark: Boolean): Color = if (dark) Color(0xFF0F172A) else Color(0xFFFFFFFF)
+private const val CardFillLighten = 0.50f
 
-/** 灰卡底那层叠色：两个主题都压近黑（浅色页面压出中灰、深色页面压出更沉的一档）*/
-internal fun dimFillTint(dark: Boolean): Color = Color(0xFF0F172A)
-/** 灰卡底那层叠色的 alpha（见 [dimFillTint]）*/
+/**
+ * 地点带底 = 亮卡底再往**课程色**回压一档（同色系再深一点的浅色）。
+ *
+ * 刻意不是"叠一层黑"：叠黑会把色相一起洗掉，看着像脏了；往原色回压保留色相，
+ * 而且因为是同一色相变深，地点那行字只会更清楚（实测带/底 1.15~1.28、深字 ≥ 7.0）。
+ */
+private const val RoomBandDeepen = 0.36f
+
+/** 浅色主题的灰卡 = 近黑 12% 叠在纯白上（浅灰：比亮卡淡，边界由底色自己划） */
+private const val DimFillAlphaLight = 0.12f
+
+/** 深色主题的灰卡 = 近黑 34% 叠在纯白上（中灰：在深页面上比亮卡沉，又不至于发白刺眼） */
+private const val DimFillAlphaDark = 0.34f
+
+/** 灰卡底那层叠色的基色（中性的近黑，与配色预设无关） */
+internal val GridCardDimTint = Color(0xFF0F172A)
+
+/**
+ * 灰卡底那层叠色的 alpha（纯函数，单测读它）。
+ *
+ * ★ 叠色的**基色恒为纯白**（见 [courseCardDimFill]），不跟着页面底走：卡片是不透明色块，
+ * 它的灰是一个**绝对值**。跟着页面底走的话，同一张卡在浅色主题里是浅灰、在深色主题里
+ * 就变成近黑 —— 那正是上一版的做法，也就必须配白字，字色于是不再是常数。
+ */
 internal fun dimFillAlpha(dark: Boolean): Float = if (dark) DimFillAlphaDark else DimFillAlphaLight
 
 /**
- * 亮卡（这一周会上）的填充底色：**课程色压深一档**（纯函数，单测钉住）。
- *
- * 两个主题用同一个压深比例：课程色令牌本来就只有一套（它不属于"配色预设"那一维），
- * 压深后的色块在深色页面上依然浮得出来，白字在两边也都达标（见本节开头的表）。
+ * 亮卡（这一周会上）的填充底色：**课程色混一半白**（纯函数，单测钉住）。
  *
  * 底色**不透明**是刻意的：半透明的话它下面压着什么会跟着透出来，
- * 白字的实际对比度就变成"取决于背后画了什么"（量不准、也守不住）。
+ * 深字的实际对比度就变成"取决于背后画了什么"（量不准、也守不住）。
  */
-internal fun courseCardFill(accent: Color): Color = lerp(accent, Color.Black, CardFillDarken)
+internal fun courseCardFill(accent: Color): Color = lerp(accent, Color.White, CardFillLighten)
 
-/** 地点带底色：亮卡底再叠一层近黑（越叠越暗，于是地点那行字只会更清楚）*/
+/** 地点带底色：亮卡底往课程色回压一档（**永远比卡底深**，单测钉住）*/
 internal fun courseCardRoomBand(accent: Color): Color =
-    over(Color.Black, RoomBandOverlay, courseCardFill(accent))
+    lerp(courseCardFill(accent), accent, RoomBandDeepen)
 
 /**
  * 灰卡（这一周不上 / 放假）的底色（**不透明**，纯函数，单测钉住）。
  *
- * 刻意**与课程色无关**：灰底一旦随课程色变亮变暗，白字的对比度就跟着漂
- * （有的课达标、有的不达标）。中性之后"亮↔灰"这条通路只剩下一个变量 —— 底色。
+ * 刻意**与课程色无关**：灰底一旦跟着课程色变，它就与亮卡成了同一族色，
+ * "这一周不上"就只能靠深浅去猜。中性之后这里只剩一个变量 —— 灰到什么程度。
  */
 internal fun courseCardDimFill(dark: Boolean): Color =
-    over(dimFillTint(dark), dimFillAlpha(dark), pageBase(dark))
+    over(GridCardDimTint, dimFillAlpha(dark), Color.White)
 
 /**
- * 卡片上的字色：**纯白**（唯一的取值口径，绘制与对比度单测都读它）。
+ * 卡片上的字色：**色板角色**里"压在浅色卡片上的那支深色"（唯一的取值口径）。
  *
- * 为什么不是 `colorScheme.onPrimary`：色块是**课程色**（与配色预设无关），
- * 而 `onPrimary` 随配色预设变 —— 两者挂钩的话，换个预设就会让同一张卡的字色变一次，
- * 而"白字压深色块"在任何预设下都成立（见本节开头的实测表）。
+ * 为什么不写死 `Color(0xFF0F172A)`：R11 要求文字色走 `MaterialTheme.colorScheme` 角色，
+ * 写死的话换主题/换色板时卡片不会跟着走。
+ *
+ * 为什么是"两支角色取更暗的那支"而不是直接取 `onSurface`：
+ *  - 浅色主题的 `onSurface` 本来就是深色（`#0F172A`）→ 取到它，正是要求里说的那个角色；
+ *  - **深色主题的 `onSurface` 是白的**，压在浅色卡片上等于没字 —— 那不是"可读性取舍"，
+ *    是看不见。所以深色主题退到同一套色板的 `inverseOnSurface`：Material3 给
+ *    "深色主题里的一块浅色表面"准备的就是 `inverseSurface` / `inverseOnSurface` 这一对。
+ *
+ * 两个主题因此都得到 `#0F172A`：字色是**常数**，换周插值的中段不可能撞车（见本节二）。
  */
-internal val GridCardTextOnFill = Color.White
+internal fun gridCardTextColor(colorScheme: ColorScheme): Color {
+    val onSurface = colorScheme.onSurface
+    val inverseOnSurface = colorScheme.inverseOnSurface
+    return if (relativeLuminance(onSurface) <= relativeLuminance(inverseOnSurface)) {
+        onSurface
+    } else {
+        inverseOnSurface
+    }
+}
 
 /**
- * 灰卡的描边：深色主题下靠它把卡片从页面底上划出来；
- * 浅色主题的灰卡本来就比页面底深得多，不需要再加一圈边。
+ * 这套色板是不是"深色主题"（纯函数）：`surface` 比 `onSurface` 暗就是。
+ *
+ * ★ 刻意**不读 `isSystemInDarkTheme()`**：卡片的灰卡底要跟着**当前真正生效的那套色板**走。
+ * 两者在真实界面里本来就一致（`ManyCourseTheme` 的默认值就是系统明暗），
+ * 但在**强制指定过主题**的地方（插桩测试、Compose 预览、以后可能有的"跟随 App 内开关"）
+ * 会不一致 —— 那时字色按深色板取、灰卡底却按浅色板取，卡片会当场变成一块看不清的灰。
  */
-internal fun courseCardDimOutline(dark: Boolean): Color =
-    if (dark) Color.White.copy(alpha = DimOutlineAlphaDark) else Color.Transparent
+internal fun isDarkColorScheme(colorScheme: ColorScheme): Boolean =
+    relativeLuminance(colorScheme.surface) < relativeLuminance(colorScheme.onSurface)
 
 /**
  * 把 [top] 按 [alpha] 合成到 [base] 上（对比度只能量**合成之后**的颜色）。
@@ -465,7 +491,7 @@ private val CardInnerVerticalPadding = 8.dp
  *  ┌───────────────────────────────────────────────────────────┐
  *  │ 10月 │ 周一 12 │ 周二 13 │ 周三 14 │ 周四 15 │ …            │  ← 今天那格是实心蓝胶囊
  *  │─────┼─────────┼─────────┼─────────┼─────────┼──────────────│
- *  │ 9:00│ ▓大学英语▓（亮：填充色 + 白字）  ░军事理论░（灰）      │  ┐
+ *  │ 9:00│ ▓大学英语▓（亮：浅色填充 + 深色字）  ░军事理论░（灰）      │  ┐
  *  │ 1-2节│ ▓笃行楼U…▓                              ░笃行楼T…░   │  │ 一行 = 两节
  *  │10:20│                                                      │  ┘
  *  │10:40│ …                                                     │
@@ -481,10 +507,10 @@ private val CardInnerVerticalPadding = 8.dp
  *  - **二维网格为容器**：一列一天（七列等宽铺满整屏，不横滚 —— 周视图要能一眼看全周）、
  *    **一行一个「两节块」**（`1-2` / `3-4` / `5-6` …，见 [PeriodsPerRow]），
  *    `哪个块 × 星期几` 唯一确定一个格子；
- *  - **卡片为课程载体**：**填充色块 + 白字** + 底部地点带（与参考图一致），颜色走
+ *  - **卡片为课程载体**：**浅色系填充色块 + 深色字** + 底部地点带，颜色走
  *    `CourseRepository.colorOfName(课名)`，与课表页/月历列表/圆点同色；
- *    色块会按 [CardFillDarken] 统一压深一档 —— 那是白字达标的**前提**，
- *    不是另一套调色板（比对度护栏见 `GridCardContrastTest`）。
+ *    色块按 [CardFillLighten] 统一往白里拉一档 —— 那是"浅色系"这条要求的落点，
+ *    不是另一套调色板（对比度护栏见 `GridCardContrastTest`）。
  *
  * ## 整周一眼看完：**任何地方都不滚动**，行高跟着屏幕走
  *
@@ -1606,46 +1632,174 @@ internal fun nameLineCount(areaHeight: Dp, lineHeight: Dp): Int {
 }
 
 /**
- * 网格里的课程卡片：**填充色块 + 白字** + 居中的课名 + 底部地点带（参考图的卡片就是这个结构）。
+ * 课名排版的一档：**字号 + 行框高**（两者同比例放大缩小，见 [gridNameSteps]）。
+ */
+internal data class GridNameStep(val font: TextUnit, val lineHeight: TextUnit)
+
+/**
+ * 字号梯子的下限：**最小可读字号**。
+ *
+ * 卡片只有 45dp 上下宽，`大学英语I（综合基础）`（11 个字）在基准字号下一行只放得下
+ * 3~4 个字 —— 想"显示全"唯一的办法是把字缩小。但缩到看不清就没有意义了，
+ * 6.5sp 是本项目里还能认出来的下限（8 行的密课表实测：6.5sp 一行 5 个汉字、
+ * 课名区 30dp 能画 3 行，也就是 15 个字）。比它更长、或者格子更挤的名字才落到省略号上。
+ */
+private val MinNameFont = 6.5.sp
+
+/** 字号梯子的步进：0.5sp（再细就是白量：行数只在整数上变）*/
+private const val NameFontStep = 0.5f
+
+/**
+ * 课名区的字号梯子：从这一档的基准字号一路降到 [MinNameFont]（由大到小）。
+ *
+ * ★ 行框高**跟着字号按比例走**，不写死：写死的话"缩字号"只省下**宽度**，
+ * 矮格子里一行的高度不变、能画的行数也不变 —— 那点缩小换不来"多放一个字"。
+ * 按比例缩时，字号小一档、行框也矮一档，"能画的行数"跟着涨，长名字才真的放得下。
+ */
+internal fun gridNameSteps(style: GridCardStyle): List<GridNameStep> {
+    val ratio = style.nameLine.value / style.nameFont.value
+    val steps = mutableListOf<GridNameStep>()
+    var font = style.nameFont.value
+    while (font >= MinNameFont.value - 1e-3f) {
+        steps += GridNameStep(font.sp, (font * ratio).sp)
+        font -= NameFontStep
+    }
+    return steps.ifEmpty { listOf(GridNameStep(style.nameFont, style.nameLine)) }
+}
+
+/**
+ * 课名排版的结果（[fitGridCardName] 的返回值）。
+ *
+ * @param fontSize 画课名用的字号（梯子里的一档）
+ * @param lineHeight 该字号的行框高（`行数 × 行框高 ≤ 课名区高` 靠它成立）
+ * @param maxLines 这个字号下**最多**能画几行（[nameLineCount] 现算）
+ * @param lines 这个名字**实际**要占几行（`lineCountOf` 量出来的）
+ * @param fits 能不能**完整**放下。false = 已缩到 [MinNameFont] 仍放不下，只能走省略号；
+ *   即便 false，`maxLines × lineHeight ≤ 课名区高` 仍成立，所以**绝不会出现半截字**
+ */
+internal data class GridNameFit(
+    val fontSize: TextUnit,
+    val lineHeight: TextUnit,
+    val maxLines: Int,
+    val lines: Int,
+    val fits: Boolean,
+)
+
+/**
+ * 在一串字号里挑出**能完整放下课名**的最大一档（纯函数，`GridCardNameFitTest` 钉住）。
+ *
+ * ## 为什么值得单独拎出来
+ *
+ * "课程卡片的字显示不全"是用户报上来的原话，而它的成因有两层：
+ *  - 早先 `maxLines` 由 `weight(1f)` 分到的高度算出（密课表里就是 2 行），多出来的字
+ *    被省略号吃掉；
+ *  - 光把 `maxLines` 放大也不行：卡片只有 45dp 宽，基准字号一行放不下 4 个汉字，
+ *    11 个字要 3~4 行，矮格子里根本没有那么多行可画。
+ *
+ * 所以"放下"是**两个变量一起解**：字号越小，一行放得越多、行框也越矮（能画的行数越多）。
+ * 这里从大到小试，第一个"行数 ≤ 能画的行数"的档就是答案 —— 短名字保持基准字号，
+ * 长名字自动降档换行，而不是被截断。
+ *
+ * ## 三条不变式（单测逐条钉住）
+ *
+ *  1. **绝不溢出**：返回的 `maxLines × lineHeight ≤ nameAreaHeight`（[nameLineCount] 保证），
+ *     所以最后一行不会被课名框下沿切掉半截 —— 宁可字小，也不出现"字被切一半"；
+ *  2. **能放就放**：只要梯子里存在一档放得下，返回的就是其中**最大**的那一档（`fits = true`）；
+ *  3. **兜底也有下限**：都放不下时返回**最小可读字号**（梯子最后一档）并置 `fits = false`，
+ *     由 `TextOverflow.Ellipsis` 在框内收尾 —— 省略号是"实在放不下"的如实交代，
+ *     不是"懒得算"。
+ *
+ * ★ `lineCountOf` 由调用方给：组合里用 `TextMeasurer` **实测**（同一个名字、同一个宽度、
+ * 同一个字重，与真正画出来的排版逐字一致），单测里换成"字宽模型"就能在 JVM 上钉住
+ * 整套选择逻辑（见 `GridCardNameFitTest`）。
+ *
+ * @param nameAreaHeight 课名框的实高（不含地点带，已扣掉框自己的上下留白）
+ * @param steps 字号梯子（由大到小；给空的话退回最小可读字号）
+ * @param fontScale 系统的字体缩放（sp → dp 要乘它，见 [spToDp]）
+ * @param lineCountOf 某个字号下这个名字要占几行（实测 / 模型）
+ */
+internal fun fitGridCardName(
+    name: String,
+    nameAreaHeight: Dp,
+    steps: List<GridNameStep>,
+    fontScale: Float,
+    lineCountOf: (String, GridNameStep) -> Int,
+): GridNameFit {
+    val ladder = steps.ifEmpty { listOf(GridNameStep(MinNameFont, MinNameFont)) }
+    var fallback: GridNameFit? = null
+    ladder.forEach { step ->
+        val lineHeight = (step.lineHeight.value * fontScale).dp
+        // 行框本身就比课名区高：那一行会被课名框下沿切掉半截（比省略号更糟）→ 换下一档
+        if (!lineHeight.value.isFinite() || lineHeight.value <= 0f) return@forEach
+        if (lineHeight > nameAreaHeight) return@forEach
+        val maxLines = nameLineCount(nameAreaHeight, lineHeight)
+        val lines = lineCountOf(name, step).coerceAtLeast(1)
+        val fit = GridNameFit(
+            fontSize = step.font,
+            lineHeight = step.lineHeight,
+            maxLines = maxLines,
+            lines = lines.coerceAtMost(maxLines),
+            fits = lines <= maxLines,
+        )
+        if (fit.fits) return fit
+        // 放不下就记下来接着往下试；循环结束时留下的就是**最小可读字号**那一档
+        fallback = fit
+    }
+    return fallback ?: GridNameFit(
+        fontSize = MinNameFont,
+        lineHeight = MinNameFont,
+        maxLines = 1,
+        lines = 1,
+        fits = false,
+    )
+}
+
+/**
+ * 网格里的课程卡片：**浅色系填充色块 + 深色字** + 居中的课名 + 底部地点带。
  *
  * 时间**故意不写**：纵向位置就是时间轴上的位置，再写一遍「3-4节」是噪音 ——
  * 要知道确切时间，点开课程详情浮层。
  *
- * ## 面貌只有两态，底色都是不透明的，**字色都是白**
+ * ## 面貌只有两态，底色都是不透明的，**字色都是深色（而且是常数）**
  *
  * | | 底色 | 字色 | 描边 |
  * |---|---|---|---|
- * | 亮（这一周会上） | [courseCardFill]（课程色压深一档） | [GridCardTextOnFill] 白字 | 无 |
- * | 灰（课表里有、这周不上 / 放假） | [courseCardDimFill] 中性偏深一档 | 同上（白字） | 深色主题下加一圈淡描边 |
+ * | 亮（这一周会上） | [courseCardFill]（课程色混一半白） | [gridCardTextColor] 深色 | 无 |
+ * | 灰（课表里有、这周不上 / 放假） | [courseCardDimFill] 浅灰 / 中灰 | 同上（同一支深色） | 无 |
  *
  * 三条理由，缺一不可：
- *  - **不透明**：半透明的话压在它下面的网格线会透出来，白字的实际对比度就变成
+ *  - **不透明**：半透明的话压在它下面的网格线会透出来，深字的实际对比度就变成
  *    "取决于背后画了什么"（量不准、也守不住）；
- *  - **字色恒定**：灰卡与亮卡的底色一深一浅，字色若跟着一起插值，中间必然有一帧
- *    两者亮度相等（对比度恒等于 1），课名会先糊掉再出现；
- *  - **灰卡也做成深色**：这是让"字色恒定（白）"与"整条渐变都达标"同时成立的唯一办法
- *    （来历见"卡片面貌"那一节开头的第二条取舍）。
+ *  - **字色恒定**：字色与换周进度 `face` 无关，所以插值的**每一帧**都是同一支深色。
+ *    如果让字色跟着底色一起插值，中间必然有一帧两者亮度相等（对比度恒等于 1），
+ *    课名会先糊掉再出现 —— 上一版的"深底白字"正是被这一条逼出来的；
+ *  - **灰卡也是浅的**：这是让"字色恒定"与"整条渐变都达标"同时成立的唯一办法
+ *    （来历见"卡片面貌"那一节开头的取舍）。
  *
- * ## 排版按"卡片有多高"自适应（[cardHeight] → [gridCardTier]）
+ * ## 排版按"卡片有多高/多宽"自适应：档位 → 自动缩字号 → 最后才是省略号
  *
- * 行高由整屏自适应算出来（[gridRowHeight]），所以卡片有时只有 40dp 上下（广工 6 块）、
- * 有时高到 88dp（3 块）。跟着变的有三样，顺序就是"先撤整项、再缩字号、最后省略号"：
+ * 行高由整屏自适应算出来（[gridRowHeight]），所以卡片有时只有 40dp 上下（块数多的学校）、
+ * 有时高到 88dp（3 块）。课名是这张卡**唯一**的信息（时间由位置表示、地点在底部小字里），
+ * 所以顺序是"先撤整项、再缩字号、最后才允许省略号"：
  *
  *  1. **档位**（[GridCardTier]）：放不下整条地点带就**整条撤掉**（[gridCardTier]），
  *     撤掉后省下的高度全归课名 —— 这是"永不裁字"最关键的一步，
  *     因为"地点带画了一半"就是被卡片下沿切掉的字；
- *  2. **字号**：10sp / 8.5sp / 7.5sp 三档。卡片只有 45dp 宽，字号直接决定
- *     "一行放得下几个字"，矮格子里宁可字小也要把课名显示全；
- *  3. **课名画几行**由课名框的实高现算（[nameLineCount]）—— 超长名字只在框内出现省略号。
+ *  2. **字号自动缩**：[fitGridCardName] 在 [gridNameSteps] 这条梯子上从大到小试，
+ *     取"这个名字真的能完整放下"的最大一档（行数由 `TextMeasurer` **实测**，
+ *     不是按字数估的）。名字长的卡字小一点、名字短的卡保持基准字号 ——
+ *     换行因此是"缩到放得下再换行"，而不是"截成一个省略号"；
+ *  3. **课名画几行**由"该字号的行框高"与课名区实高现算（[nameLineCount]），
+ *     于是 `行数 × 行框高 ≤ 课名区高` 恒成立，最后一行不会被卡片下沿切掉半截。
  *
- * ★ 这一整套**没有任何动画**：档位是纯函数算出来的静态值，换周/换行数都不重播。
+ * ★ 这一整套**没有任何动画**：档位与字号都是纯函数算出来的静态值，换周/换行数都不重播。
  *   课表的"位置本身就是信息"（§2.5），整块位移或不必要的过渡一律不加。
  *
  * @param card [GridCard.dim] = true 的目标面貌是灰调（这一周不上）。**换周时不是瞬间换色**：
- *   底色 / 地点带 / 字色按 [rememberGridCardFace] 的进度一起插值，于是"亮↔灰"是淡入淡出，
- *   同一门课"这周亮、下周灰"是同一张卡片换个面貌，一眼可比。
- *   ★ 两个端点都是不透明色，所以插值**路径上每一帧**也都不透明 —— 白字的对比度逐帧达标
- *   （`GridCardContrastTest.亮灰渐变路径上每一帧的字色都读得清`）
+ *   底色与地点带按 [rememberGridCardFace] 的进度一起插值（字色不参与，它是常数），
+ *   于是"亮↔灰"是淡入淡出，同一门课"这周亮、下周灰"是同一张卡片换个面貌，一眼可比。
+ *   ★ 两个端点都是不透明浅色，所以插值**路径上每一帧**也都不透明 —— 深字的对比度逐帧达标
+ *   （`GridCardContrastTest.weekChangeKeepsTextReadableAtEveryFrame`）
  * @param highlighted 被**点中的那一张**（判定见 [isTappedCard]）：加一圈强调色描边（和 X/Y 轴的点亮配套）。
  *   同节次的其他日期不算 —— 那是"选中一门课，别的日子也跟着亮"那个 bug
  * @param cardHeight 这张卡的实高（`行高 × 跨几行`）：档位由它定，与"屏幕多大"无关 ——
@@ -1665,9 +1819,11 @@ private fun GridCourseCard(
     val accent = CourseRepository.colorOfName(entry.name)
     val tokens = LocalGlassTokens.current
     val density = LocalDensity.current
-    // 明暗主题：卡片底与字色都要跟着它变（见本节开头那张实测表）。
-    // 读的是**系统**明暗而不是某个自定义开关 —— 与 `ManyCourseTheme` 的默认口径一致
-    val dark = isSystemInDarkTheme()
+    // 明暗主题只影响**灰卡**取哪一档灰（见 [courseCardDimFill]）：亮卡底与字色在两个主题里
+    // 一模一样，这样"字色是常数"才成立。判据取自**当前生效的色板**（不是系统明暗），
+    // 于是字色与灰卡底永远来自同一套色板 —— 见 [isDarkColorScheme]
+    val scheme = MaterialTheme.colorScheme
+    val dark = isDarkColorScheme(scheme)
     val interactionSource = remember { MutableInteractionSource() }
     val pressed by interactionSource.collectIsPressedAsState()
     val pressScale by animateFloatAsState(
@@ -1677,18 +1833,14 @@ private fun GridCourseCard(
     )
     // ★ 换周 = 就地把这张卡"换牌"（实体课 ↔ 灰卡）：走**面貌渐变**而不是瞬间换色。
     //   0 = 灰卡的样子，1 = 这一周会上的样子。
-    //   ★ 插值的**只有底色**；字色每帧按"哪个更清楚"现算（见本节开头的第二条取舍）：
-    //   灰卡是浅底深字、亮卡是深底浅字，两者要求相反 —— 若让字色也一起插值，
-    //   中间必然有一帧两者亮度相等（对比度恒等于 1），课名会先糊掉再出现。
+    //   ★ 插值的**只有底色与地点带**；字色与 `face` 无关（见 KDoc 第二条理由）
     val face = rememberGridCardFace(dim = card.dim)
-    val bodyTint = lerp(courseCardDimFill(dark), courseCardFill(accent), face)
-    val footerTint = lerp(courseCardDimFill(dark), courseCardRoomBand(accent), face)
-    // 灰卡的描边：深色主题下靠它划出卡片边界（浅色主题是 Transparent，不画）。
-    // ★ 这里必须用 `Color.Transparent`，不能写 `dimOutline.copy(alpha = 0f)`：
-    //   后者只是清掉 colorSpace，alpha 还是原来的 0.65 —— 亮卡上会一直挂着一圈灰描边
-    val dimOutline = courseCardDimOutline(dark)
-    val outlineTint = lerp(dimOutline, Color.Transparent, face)
-    val textColor = GridCardTextOnFill
+    val dimFill = courseCardDimFill(dark)
+    val bodyTint = lerp(dimFill, courseCardFill(accent), face)
+    val footerTint = lerp(dimFill, courseCardRoomBand(accent), face)
+    // 字色走**色板角色**（R11）：浅色主题取 onSurface、深色主题取 inverseOnSurface，
+    // 两者在本项目里是同一个深色。它**不参与插值** —— 这正是"每一帧都读得清"的依据
+    val textColor = gridCardTextColor(scheme)
     // 档位门槛按**当前字体度量**算：fontScale 一调大，同一个行高就该往下退一档。
     // 判定与绘制共用同一批 sp 常量（gridCardStyle），所以两者不会漂移
     val tier = gridCardTier(
@@ -1697,7 +1849,6 @@ private fun GridCourseCard(
         nameLineHeight = spToDp(density, NameLineHeight),
     )
     val style = gridCardStyle(tier)
-    val roomBandHeight = gridCardRoomBandHeight(style, spToDp(density, style.roomFont))
 
     Column(
         modifier = modifier
@@ -1709,13 +1860,10 @@ private fun GridCourseCard(
             .clip(shape)
             .background(bodyTint)
             .then(
-                when {
-                    // 被点中的那张：强调色描边（与 X/Y 轴的点亮配套）
-                    highlighted -> Modifier.border(1.5.dp, tokens.accent, shape)
-                    // 灰卡：同色系淡描边（不描的话就是一个灰方块，看不出"这里排过课"）
-                    outlineTint.alpha > 0.01f -> Modifier.border(1.dp, outlineTint, shape)
-                    else -> Modifier
-                }
+                // 被点中的那张：强调色描边（与 X/Y 轴的点亮配套）。
+                // 灰卡**不再描边**：浅色主题的浅灰、深色主题的中灰自己就够划出边界，
+                // 再加一圈线会让"这一周不上"看着比实体课还重（见"卡片面貌"那一节）
+                if (highlighted) Modifier.border(1.5.dp, tokens.accent, shape) else Modifier
             )
             .combinedClickable(
                 interactionSource = interactionSource,
@@ -1724,7 +1872,7 @@ private fun GridCourseCard(
             ),
     ) {
         // 课名区用 weight(1f) 吃掉"卡片高 − 地点带"：它**不参与任何动画**，
-        // 所以行数只随"这张卡多高"变，与换周无关
+        // 所以字号与行数只随"这张卡多高多宽"变，与换周无关
         Box(Modifier.weight(1f)) {
             GridCourseCardBody(
                 name = entry.name,
@@ -1732,8 +1880,6 @@ private fun GridCourseCard(
                 style = style,
                 textColor = textColor,
                 footerTint = footerTint,
-                cardHeight = cardHeight,
-                roomBandHeight = roomBandHeight,
             )
         }
     }
@@ -1742,11 +1888,13 @@ private fun GridCourseCard(
 /**
  * 卡片内容：课名区（吃掉"卡片高 − 地点带"）+ 底部地点带。
  *
- * 拆出来是因为课名行数要在**课名框自己的高度**上现算（[nameLineCount]），
- * 而那个高度 = `卡片高 − 地点带`：两个数都在这一个作用域里算，才不会各算各的。
+ * 拆出来是因为"字号与行数"必须在**课名框自己的尺寸**上现算 —— 宽度决定换行、高度决定行数，
+ * 两个数都在这一个作用域里量，才不会各算各的。（早先这里用 `卡片高 − 地点带` **估**课名区
+ * 高度，估出来的比实际大，最后一行就会被卡片下沿吃掉一点。）
  *
- * @param cardHeight 这张卡的实高
- * @param roomBandHeight 地点带的实高；0 = 这一档不画地点带（[GridCardTier.UltraCompact]）
+ * @param style 这一档的字体度量与"地点带要不要画"（[gridCardStyle]）
+ * @param textColor 字色（[gridCardTextColor]：与面貌、与换周进度都无关的常数）
+ * @param footerTint 地点带底色（随面貌插值的那个值）
  */
 @Composable
 private fun GridCourseCardBody(
@@ -1755,20 +1903,14 @@ private fun GridCourseCardBody(
     style: GridCardStyle,
     textColor: Color,
     footerTint: Color,
-    cardHeight: Dp,
-    roomBandHeight: Dp,
 ) {
+    // 一个测量器就够：测的是"这个名字在这个宽度下占几行"，与卡片数量无关
+    val measurer = rememberTextMeasurer()
     val density = LocalDensity.current
-    // 行数按**这个框真有多高**算：框里放得下几行就画几行。
-    // 写死 maxLines 在格子矮时会把最后一行裁掉半截（比省略号更难看），
-    // 写死 1 行又浪费高格子 —— 所以让行数跟着格子走，这是"任何字号都不裁字"的那一处
-    val nameLines = nameLineCount(
-        areaHeight = (cardHeight - roomBandHeight).coerceAtLeast(0.dp),
-        lineHeight = spToDp(density, style.nameLine),
-    )
+    val steps = remember(style) { gridNameSteps(style) }
 
     Column(Modifier.fillMaxSize()) {
-        Box(
+        BoxWithConstraints(
             Modifier
                 .weight(1f)
                 .fillMaxWidth()
@@ -1778,14 +1920,42 @@ private fun GridCourseCardBody(
                 ),
             contentAlignment = Alignment.Center,
         ) {
+            // 课名框的**实有**尺寸（已去掉 padding）：换行按宽算、行数按高算
+            val areaHeight = maxHeight
+            val areaWidth = maxWidth
+            val widthPx = with(density) { areaWidth.roundToPx() }
+            val fontScale = density.fontScale
+            // 逐档实测"这个名字要占几行"，挑出能完整放下的最大一档。
+            // ★ 用 remember 钉住：换周时卡片会逐帧重组，但课名与课名框都没变 ——
+            //   不 remember 的话每帧都要把 8 档文字重排一遍
+            val fit = remember(name, widthPx, areaHeight, steps, fontScale) {
+                fitGridCardName(
+                    name = name,
+                    nameAreaHeight = areaHeight,
+                    steps = steps,
+                    fontScale = fontScale,
+                ) { text, step ->
+                    measurer.measure(
+                        text = text,
+                        style = TextStyle(
+                            fontSize = step.font,
+                            fontWeight = FontWeight.SemiBold,
+                        ),
+                        constraints = Constraints(maxWidth = widthPx),
+                    ).lineCount
+                }
+            }
             Text(
                 text = name,
-                fontSize = style.nameFont,
-                lineHeight = style.nameLine,
+                fontSize = fit.fontSize,
+                lineHeight = fit.lineHeight,
                 fontWeight = FontWeight.SemiBold,
                 textAlign = TextAlign.Center,
                 color = textColor,
-                maxLines = nameLines,
+                // 行数由"该字号的行框高"与课名区实高现算（[nameLineCount]），于是
+                // `行数 × 行框高 ≤ 课名区高` 恒成立 —— 最后一行永远不会被切掉半截。
+                // 只有"缩到最小可读字号仍放不下"的极端名字才真的走到省略号
+                maxLines = fit.maxLines,
                 overflow = TextOverflow.Ellipsis,
             )
         }
@@ -1846,12 +2016,13 @@ private const val PressedGridCardScale = 0.97f
  *
  * 换周时每张卡片的亮/灰会翻（见 [buildGridCards] 的规则 2），原来的写法是
  * `if (card.dim) 灰 else 亮` —— 换色是瞬间的，一眼看上去像"啪"地换了一张牌。
- * 这里把它变成一个**追着目标走的连续值**，卡片的底色 / 地点带 / 字色三者一起插值：
+ * 这里把它变成一个**追着目标走的连续值**，卡片的底色与地点带两者一起插值
+ * （**字色不参与**：它是常数，见 [gridCardTextColor] —— 这正是"每一帧都读得清"的依据）：
  *
  * | 方向 | 观感 |
  * |---|---|
- * | 灰 → 亮 | 课程色**淡入**（这一周会上），白字跟着提亮 |
- * | 亮 → 灰 | **淡出**到中性表面（这一周不上 / 放假，但位置留着） |
+ * | 灰 → 亮 | 课程色**淡入**（这一周会上） |
+ * | 亮 → 灰 | **淡出**到浅灰（这一周不上 / 放假，但位置留着） |
  *
  * ★ **换周的动效只有这一处，而且只改颜色**：不做整块位移或缩放 ——
  * 整张表上下浮会看成"在抖"，而课表的位置本身就是信息（第几行 = 第几个块、第几列 = 星期几）。

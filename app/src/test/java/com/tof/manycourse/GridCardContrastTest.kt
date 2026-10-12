@@ -3,17 +3,20 @@ package com.tof.manycourse
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.luminance
-import com.tof.manycourse.ui.GridCardTextOnFill
+import com.tof.manycourse.ui.GridCardDimTint
+import com.tof.manycourse.ui.GridCardTier
 import com.tof.manycourse.ui.contrastRatio
 import com.tof.manycourse.ui.courseCardDimFill
-import com.tof.manycourse.ui.courseCardDimOutline
 import com.tof.manycourse.ui.courseCardFill
 import com.tof.manycourse.ui.courseCardRoomBand
 import com.tof.manycourse.ui.dimFillAlpha
-import com.tof.manycourse.ui.dimFillTint
+import com.tof.manycourse.ui.gridCardStyle
+import com.tof.manycourse.ui.gridCardTextColor
 import com.tof.manycourse.ui.over
 import com.tof.manycourse.ui.relativeLuminance
 import com.tof.manycourse.ui.theme.CourseDotColors
+import com.tof.manycourse.ui.theme.DarkColorScheme
+import com.tof.manycourse.ui.theme.LightColorScheme
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -23,19 +26,25 @@ import org.junit.Test
  *
  * ## 为什么值得单测
  *
- * 卡片改成了**填充色块 + 白字**（对齐参考图），于是"白字压在色块上还看不看得清"
- * 变成一条需要算的约束 —— 而它错的后果**不会崩**：只是某几门课的课名糊在底色里，
- * 或者换周动画的中段课名整个消失。真机上要一门一门课地看才发现。
+ * 卡片是**浅色系填充色块 + 深色字**（课程色混一半白 / 浅灰），于是"深字压在这个底色上
+ * 还看不看得清"变成一条需要算的约束 —— 而它错的后果**不会崩**：只是某几门课的课名糊在
+ * 底色里，或者换周动画的中段课名整个消失。真机上要一门一门课地看才发现。
  *
  * ## 门槛用的是 WCAG 2.x，不是拍的
  *
- * - [MinTextContrast] = 4.5：WCAG AA 对**正文小字**的门槛。卡上的课名是 10sp SemiBold、
- *   地点 8sp —— 都够不到 WCAG 的"大字"（18pt / 14pt 粗），所以按小字算；
- * - [MinGraphicContrast] = 3.0：WCAG AA 对图形/大字的分辨门槛，只用在**描边**上
- *   （它不承载文字，只负责划出卡片边界），**没有**用它给课名放水。
+ * - [MinTextContrast] = 4.5：WCAG AA 对**正文小字**的门槛。卡上的课名是 6.5~10sp SemiBold、
+ *   地点 7~8sp —— 都够不到 WCAG 的「大字」（14pt 加粗 / 18pt），所以一律按小字算；
+ * - [MinDistinctRatio] / [MinDistinctLuminanceGap]：亮卡与灰卡「看得出不一样」的下限
+ *   （图例写的是「亮 = 本周会上 · 灰 = 本周不上」，两张卡长得一样这个图例就是假的）。
  *
- * 换周渐变**逐帧**用的是同一个 4.5（没有单独放宽）：本设计把灰卡也做成了深色，
- * 于是整条路径上白字的对比度单调变化，最低点就是灰卡那一端。
+ * 换周渐变**逐帧**用的是同一个 4.5（没有单独放宽）：本设计的字色是**常数**，
+ * 而两个端点都是浅色，所以整条路径的对比度只升不降，最低点就是较暗的那一端（实测 7.0）。
+ *
+ * ## 实测值（五个课程色取最差的一个）
+ *
+ * | | 亮卡底 | 地点带 | 灰卡底（浅色主题） | 灰卡底（深色主题） | 字色 |
+ * |---|---|---|---|---|---|
+ * | 最差对比度 | 9.0 | 7.0 | 13.9 | 8.2 | 都是 `#0F172A` |
  */
 class GridCardContrastTest {
 
@@ -43,8 +52,14 @@ class GridCardContrastTest {
         /** WCAG AA 正文小字的门槛 */
         const val MinTextContrast = 4.5
 
-        /** WCAG AA 图形/大字的分辨门槛（只用于描边） */
-        const val MinGraphicContrast = 3.0
+        /** WCAG 2.x 允许放宽到 3.0 的「大字」下限：14pt 加粗 */
+        const val WcagLargeBoldPt = 14f
+
+        /** 亮卡与灰卡至少要有这么明显的差别（对比度那一支）*/
+        const val MinDistinctRatio = 1.20
+
+        /** 或者至少在亮度上差这么多（对比度对小色块不敏感，所以留一支亮度判据）*/
+        const val MinDistinctLuminanceGap = 0.05
 
         /** 页面底色的两个极端：浅色主题纯白、深色主题 `#0F172A`（`ColorScheme.background`）*/
         val LightPage = Color(0xFFFFFFFF)
@@ -52,6 +67,15 @@ class GridCardContrastTest {
 
         /** 课程色令牌一共 5 个（`CourseDotColors`）：每一门课都要过 */
         val accents get() = CourseDotColors
+
+        /** 两个主题各自真实使用的那套色板角色（卡片字色从它们里面取）*/
+        fun scheme(dark: Boolean) = if (dark) DarkColorScheme else LightColorScheme
+
+        /** 某个主题下真实绘制出来的卡片字色 */
+        fun cardText(dark: Boolean) = gridCardTextColor(scheme(dark))
+
+        /** 某个主题的页面底色 */
+        fun page(dark: Boolean) = if (dark) DarkPage else LightPage
     }
 
     // ══════════════════ ① 自身校验：两支亮度公式必须一致 ══════════════════
@@ -59,15 +83,16 @@ class GridCardContrastTest {
     /**
      * 自己那份 [relativeLuminance] 对**不透明**色必须与 Compose 的 `luminance()` 完全一致。
      *
-     * 少了这条，公式抄错会让下面所有断言"全绿但全假"。本轮确实在这上面走过两轮弯路：
-     * 早先两版分别把"浅底深字 + 深底白字"当成同一支字色、以及漏算了灰卡底是半透明叠色，
-     * 数字看着都合理，实际路径中段掉到 1.5 / 端点掉到 1.2（都被下面几条抓出来了）。
+     * 少了这条，公式抄错会让下面所有断言"全绿但全假"。它专门盯着本文件最容易被写错的地方：
+     * 灰卡底是**合成**出来的（不透明，但由叠色算出），亮卡底是**插值**出来的。
      */
     @Test
     fun luminanceAgreesWithComposeForOpaqueColours() {
         val samples = listOf(
             Color(0xFFFFFFFF), Color(0xFF000000), Color(0xFF0F172A), Color(0xFFE2E8F0),
-        ) + accents + accents.map(::courseCardFill)
+        ) + accents + accents.map(::courseCardFill) +
+            accents.map(::courseCardRoomBand) +
+            listOf(courseCardDimFill(dark = false), courseCardDimFill(dark = true))
         samples.forEach { color ->
             assertEquals(
                 "相对亮度公式与 Compose 的 luminance() 不一致：$color",
@@ -95,139 +120,131 @@ class GridCardContrastTest {
         )
     }
 
-    // ══════════════════ ② 亮卡：课程色块上的课名/地点必须读得清 ══════════════════
+    // ══════════════════ ② 亮卡：浅色底 + 深色字 ══════════════════
 
     @Test
     fun courseCardTextIsReadableOnEveryCourseColour() {
-        accents.forEach { accent ->
-            val body = courseCardFill(accent)
-            val band = courseCardRoomBand(accent)
-            assertReadable("亮卡底（课程色 $accent）", body, GridCardTextOnFill)
-            assertReadable("地点带（课程色 $accent）", band, GridCardTextOnFill)
+        listOf(false, true).forEach { dark ->
+            accents.forEach { accent ->
+                val body = courseCardFill(accent)
+                val band = courseCardRoomBand(accent)
+                val text = cardText(dark)
+                assertReadable("${theme(dark)}主题亮卡底（课程色 $accent）", body, text)
+                assertReadable("${theme(dark)}主题地点带（课程色 $accent）", band, text)
+            }
         }
     }
 
     /**
-     * ★ **原色**（不压深）必须被这条量出来 —— 它钉的是"为什么要压深"。
+     * ★ **亮卡底必须是课程色的"浅色调"** —— 这一条钉的就是"浅色系"这个要求本身。
      *
-     * 课程色令牌是给圆点/色条用的 500 档高饱和色：直接当色块用时**五个色一个都不达标**
-     * （最差的琥珀配白字只有 2.15）。哪天有人把 [courseCardFill] 改成"原样返回课程色"，
-     * 上面那条会红，而这条会告诉他**为什么**不能那样改。
+     * 课程色令牌是给圆点/色条用的 500 档高饱和色：直接当色块用时它是一块**中等偏深**的
+     * 颜色（用户否掉的那一版还要再压深一档去配白字）。哪天有人把 [courseCardFill]
+     * 改成"原样返回课程色"或者"压深"，上面那条也许还绿（深字在中深底上照样达标），
+     * 但卡片就不再是浅色系了 —— 这条会红，并说明为什么。
      */
     @Test
-    fun rawCourseColoursWouldNotBeReadableAsFills() {
-        val unreadable = accents.filter { contrastRatio(it, GridCardTextOnFill) < MinTextContrast }
-        assertEquals(
-            "5 个课程色原色都不该达标 —— 全达标说明有人偷偷换了调色板，" +
-                "那时 [courseCardFill] 的压深就没有存在理由了",
-            accents.size,
-            unreadable.size,
-        )
+    fun litCardFillIsALightTintOfTheCourseColour() {
+        accents.forEach { accent ->
+            val fill = relativeLuminance(courseCardFill(accent))
+            val raw = relativeLuminance(accent)
+            assertTrue(
+                "课程色 $accent 的亮卡底必须**明显比原色浅**（原色 $raw → 亮卡底 $fill）：" +
+                    "卡片是「浅色系」，不是「把课程色原样当色块用」",
+                fill - raw >= 0.10,
+            )
+        }
     }
 
-    // ══════════════════ ③ 灰卡：同样要达标（浅色主题下它是深色，见 KDoc 那条取舍）══════
+    // ══════════════════ ③ 灰卡：也是浅色，而且深字读得清 ══════════════════
 
     @Test
     fun dimCardTextIsReadableInBothThemes() {
         listOf(false, true).forEach { dark ->
-            assertReadable(
-                "${if (dark) "深色" else "浅色"}主题灰卡底",
-                courseCardDimFill(dark),
-                GridCardTextOnFill,
+            assertReadable("${theme(dark)}主题灰卡底", courseCardDimFill(dark), cardText(dark))
+        }
+    }
+
+    /**
+     * ★ **灰卡也是浅色**（两个主题都是）—— 这是"字色可以是常数"的全部依据。
+     *
+     * 上一版为了让**白字**达标，把灰卡做成了中等偏深的中性色（浅色主题下 `#6A6F7B`）。
+     * 现在字色是深色，灰卡就必须留在浅色这一侧：一旦它压到中深，
+     * 深字与灰卡底的对比度就掉到 4.5 以下（下面那条会红），
+     * 而且"亮↔灰"的插值中段会出现"两支字色都刚够"的缝。
+     */
+    @Test
+    fun dimCardFillStaysOnTheLightSideInBothThemes() {
+        listOf(false, true).forEach { dark ->
+            val fill = courseCardDimFill(dark)
+            assertTrue(
+                "${theme(dark)}主题的灰卡底 $fill 亮度只有 ${"%.3f".format(relativeLuminance(fill))} —— " +
+                    "它必须留在浅色这一侧，深字才是一支常数（见 GridCardContrastTest 的类注释）",
+                relativeLuminance(fill) >= 0.35,
             )
         }
     }
 
     /**
-     * 灰卡底是**半透明叠色**算出来的，所以它的实际颜色取决于**它自己那边**的页面底 ——
-     * 而"哪一边"是主题决定的事实（浅色主题不会压在近黑页面上）。
+     * 灰卡底是**近黑按不同 alpha 叠在纯白上**算出来的（不是叠在页面底上）——
+     * 卡片是不透明色块，它的灰是一个**绝对值**。
      *
-     * 这里按各主题**真实会出现的那几档底**去量：
-     *  - 浅色主题：纯白页面、以及玻璃卡片内的浅色表面；
-     *  - 深色主题：`ColorScheme.background` 近黑、以及玻璃里的深色表面。
-     *
-     * ★ 故意**不**写成"每个主题都过白+黑两个极端"：那等于要求同一层 62% 的近黑
-     * 压在纯白与压在近黑上都达标 —— 前者得到中灰（白字 5.0），后者几乎纯黑（白字 19.6），
-     * 但**反过来**（深色主题的 50% 近黑压在纯白上）会得到一块中灰，白字只有 3.4。
-     * 而那一种组合在真实界面里不存在（深色主题的页面底永远不会是纯白）。
+     * 这条断言把"叠在白上"这件事钉死：真的按页面底去叠的话，深色主题会得到一块近黑，
+     * 那时深字（`#0F172A`）压在它上面等于没字 —— 正是这条口径挡住的那种退化。
      */
     @Test
-    fun dimCardTextStaysReadableOnRealisticPageBases() {
-        val bases = mapOf(
-            false to listOf(LightPage, Color(0xFFF5F9FF)),
-            true to listOf(DarkPage, Color(0xFF131C2E)),
-        )
-        bases.forEach { (dark, pages) ->
-            pages.forEach { page ->
-                val fill = over(dimFillTint(dark), dimFillAlpha(dark), page)
-                assertReadable("灰卡（dark=$dark）压在页面底 $page 上", fill, GridCardTextOnFill)
-            }
+    fun dimCardFillIsCompositedOnWhiteNotOnThePage() {
+        listOf(false, true).forEach { dark ->
+            assertEquals(
+                "${theme(dark)}主题的灰卡底必须由「近黑 × alpha 叠在纯白上」算出",
+                over(GridCardDimTint, dimFillAlpha(dark), Color.White),
+                courseCardDimFill(dark),
+            )
         }
     }
 
-    // ══════════════════ ④ 换周渐变：逐帧可读 ══════════════════
-
     /**
-     * ★★ **换周渐变逐帧可读** —— 这一条是本轮最贵的一个结论的护栏。
+     * 灰卡与亮卡必须**看得出不一样**（否则"亮 = 本周会上 / 灰 = 本周不上"这个图例就失效了）。
      *
-     * 灰卡与亮卡一深一浅，如果让**字色跟着底色一起插值**，中间必然有一帧两者亮度相等，
-     * 那一帧对比度**恒等于 1.0**（实测那一版五门课在渐变中段都掉到 1.5，
-     * 表现是"换周时课名先糊掉、再重新出现"）。本设计把字色做成常数（白）、
-     * 并把灰卡也做成深色 —— 于是底色单调变化，对比度只升不降，
-     * 整条路径的最低点就是灰卡那一端。这条测试按 5% 步长把 0→1 走一遍来验它。
+     * 亮卡在浅色一侧（课程色的浅色调），灰卡也在浅色一侧，所以判据留两支：
+     * 对比度 ≥ [MinDistinctRatio] **或**亮度差 ≥ [MinDistinctLuminanceGap]
+     * （浅色之间对比度天生不敏感，实测最亮的琥珀与灰卡是 1.147 / 0.105 —— 走的是第二支）。
      */
     @Test
-    fun weekChangeKeepsTextReadableAtEveryFrame() {
-        val steps = 20
-        var worst = Double.MAX_VALUE
-        var worstWhere = ""
+    fun dimCardIsVisiblyDifferentFromLitCards() {
         listOf(false, true).forEach { dark ->
-            val theme = if (dark) "深色" else "浅色"
             val dim = courseCardDimFill(dark)
             accents.forEach { accent ->
-                val body = courseCardFill(accent)
-                val band = courseCardRoomBand(accent)
-                for (step in 0..steps) {
-                    val t = step.toFloat() / steps
-                    listOf("卡底" to body, "地点带" to band).forEach { (what, target) ->
-                        val ratio = contrastRatio(lerp(dim, target, t), GridCardTextOnFill)
-                        if (ratio < worst) {
-                            worst = ratio
-                            worstWhere = "$theme 主题 $what t=$t（课程色 $accent）"
-                        }
-                    }
-                }
+                val fill = courseCardFill(accent)
+                val ratio = contrastRatio(dim, fill)
+                val lumGap = kotlin.math.abs(relativeLuminance(dim) - relativeLuminance(fill))
+                assertTrue(
+                    "${theme(dark)}主题 课程色 $accent：灰卡与亮卡的对比度只有 " +
+                        "${"%.2f".format(ratio)}、亮度差只有 ${"%.3f".format(lumGap)} —— " +
+                        "两张卡看起来会像同一张",
+                    ratio >= MinDistinctRatio || lumGap >= MinDistinctLuminanceGap,
+                )
             }
         }
-        assertTrue(
-            "换周渐变最差的一帧是 $worstWhere，只有 ${"%.2f".format(worst)}" +
-                "（下限 $MinTextContrast）—— 字色一旦跟着底色插值，这里会掉到 1 附近",
-            worst >= MinTextContrast,
-        )
     }
 
     /**
-     * ★ **白字是常数**：字色不能随换周动画变（这正是上面那条的前提）。
+     * 灰卡**不再描边**：它的边界完全由底色承担（浅色主题比卡面深一档、深色主题比页面亮得多），
+     * 所以"看得出来这里排过课"这件事必须能被量出来 —— 拿它跟**页面底**比。
      *
-     * 用反射之前的更直接的办法：把整条路径上"实际会被绘制的那支字色"取出来 ——
-     * 现在它就是 [GridCardTextOnFill]，一个 `val`，没有任何输入能改变它。
-     * 这条测试因此断言的是**它的取值本身**（白），以及它在对比度上确实是最优选择：
-     * 对每一档底色，白字都比"近黑"那支更清楚（不然就该换字色，而不是硬用白字）。
+     * 上一版深色主题的灰卡是深色，必须靠一圈白描边才划得出边界；现在两张卡都是浅的，
+     * 再描一圈深线只会让"这一周不上"看着比实体课还重（见"卡片面貌"那一节）。
      */
     @Test
-    fun whiteIsTheRightTextColourForEveryFill() {
-        assertEquals("卡片字色必须是纯白（唯一的取值口径）", Color.White, GridCardTextOnFill)
-        val nearBlack = Color(0xFF0F172A)
+    fun dimCardIsVisibleAgainstItsOwnPageWithoutAnyOutline() {
         listOf(false, true).forEach { dark ->
-            val fills = listOf(courseCardDimFill(dark)) + accents.map(::courseCardFill)
-            fills.forEach { fill ->
-                assertTrue(
-                    "底色 $fill 上白字（${"%.2f".format(contrastRatio(fill, GridCardTextOnFill))}）" +
-                        "并不比近黑字（${"%.2f".format(contrastRatio(fill, nearBlack))}）更清楚 —— " +
-                        "那就该换字色，而不是硬用白字",
-                    contrastRatio(fill, GridCardTextOnFill) >= contrastRatio(fill, nearBlack),
-                )
-            }
+            val dim = courseCardDimFill(dark)
+            val ratio = contrastRatio(dim, page(dark))
+            assertTrue(
+                "${theme(dark)}主题：灰卡底 $dim 对页面底 ${page(dark)} 的对比度只有 " +
+                    "${"%.2f".format(ratio)}，而且它已经不描边了 —— 那样就是一块看不见的卡",
+                ratio >= MinDistinctRatio,
+            )
         }
     }
 
@@ -241,49 +258,143 @@ class GridCardContrastTest {
         }
     }
 
-    /** 灰卡与亮卡必须**看得出不一样**（否则"亮/灰"这个图例就失效了）*/
+    // ══════════════════ ④ 字色是色板角色，而且是常数 ══════════════════
+
+    /**
+     * ★★ **字色必须是一支与主题、与面貌都无关的常数**。
+     *
+     * 这是"换周插值每一帧都读得清"的**全部依据**：底色在插值，字色不在。
+     * 浅色主题取 `onSurface`（`#0F172A`），深色主题的 `onSurface` 是白的 ——
+     * 白字压在浅卡上等于没字，所以那里退到同一套色板的 `inverseOnSurface`。
+     * 两者在本项目的取值**恰好是同一个深色**，这条断言把它钉住：
+     * 哪天有人改了色板里这两个角色（例如把深色主题的 `inverseOnSurface` 调浅），
+     * 这里会立刻红，而不是等到真机上换周时课名糊掉才发现。
+     */
     @Test
-    fun dimCardIsVisiblyDifferentFromLitCards() {
+    fun gridCardTextColourIsTheSameDeepColourInBothThemes() {
+        assertEquals(
+            "浅色主题的卡片字色应当就是 onSurface 角色",
+            LightColorScheme.onSurface,
+            gridCardTextColor(LightColorScheme),
+        )
+        assertEquals(
+            "深色主题的卡片字色应当取 inverseOnSurface（那里 onSurface 是白的）",
+            DarkColorScheme.inverseOnSurface,
+            gridCardTextColor(DarkColorScheme),
+        )
+        assertEquals(
+            "两个主题的卡片字色必须是同一支 —— 否则「字色是常数」就不成立，换周渐变会撞车",
+            gridCardTextColor(LightColorScheme),
+            gridCardTextColor(DarkColorScheme),
+        )
+    }
+
+    /**
+     * 深色主题**不能**用 `onSurface` 当卡片字色 —— 这条量出"为什么必须换角色"。
+     *
+     * 深色主题的 `onSurface` 是纯白；卡片底是浅色（亮卡底 `#9DC0FA` 一档）。白字压上去
+     * 最差的只有 1.1 上下，那不是"可读性取舍"，是看不见。
+     */
+    @Test
+    fun theDarkThemeOnSurfaceWouldBeInvisibleOnALightCard() {
+        val white = DarkColorScheme.onSurface
+        accents.forEach { accent ->
+            val ratio = contrastRatio(courseCardFill(accent), white)
+            assertTrue(
+                "深色主题的 onSurface（$white）压在亮卡底上只有 ${"%.2f".format(ratio)} —— " +
+                    "正因为它不达标，卡片字色才要退到 inverseOnSurface",
+                ratio < MinTextContrast,
+            )
+        }
+        assertTrue(
+            "深色主题的 onSurface 本来就该是浅色（白），否则这条测试的前提不成立",
+            relativeLuminance(white) > 0.5,
+        )
+    }
+
+    // ══════════════════ ⑤ 换周渐变：逐帧可读 ══════════════════
+
+    /**
+     * ★★ **换周渐变逐帧可读** —— 这一条是本轮最贵的一个结论的护栏。
+     *
+     * 灰卡与亮卡一浅一彩，如果让**字色跟着底色一起插值**，中间必然有一帧两者亮度相等，
+     * 那一帧对比度**恒等于 1.0**（上一版实测那一版五门课在渐变中段都掉到 1.5，
+     * 表现是"换周时课名先糊掉、再重新出现"）。本设计的字色是常数（见上一条），
+     * 两个端点又都在浅色一侧 —— 于是整条路径的最低点就是较暗的那一端（实测 7.0）。
+     * 这条测试按 5% 步长把 0→1 走一遍来验它。
+     */
+    @Test
+    fun weekChangeKeepsTextReadableAtEveryFrame() {
+        val steps = 20
+        var worst = Double.MAX_VALUE
+        var worstWhere = ""
         listOf(false, true).forEach { dark ->
             val dim = courseCardDimFill(dark)
+            val text = cardText(dark)
             accents.forEach { accent ->
-                val fill = courseCardFill(accent)
-                val ratio = contrastRatio(dim, fill)
-                val lumGap = kotlin.math.abs(relativeLuminance(dim) - relativeLuminance(fill))
-                assertTrue(
-                    "dark=$dark 课程色 $accent：灰卡与亮卡的对比度只有 ${"%.2f".format(ratio)}、" +
-                        "亮度差只有 ${"%.3f".format(lumGap)} —— 两张卡看起来会像同一张",
-                    ratio >= 1.20 || lumGap >= 0.05,
-                )
+                val body = courseCardFill(accent)
+                val band = courseCardRoomBand(accent)
+                for (step in 0..steps) {
+                    val t = step.toFloat() / steps
+                    listOf("卡底" to body, "地点带" to band).forEach { (what, target) ->
+                        val ratio = contrastRatio(lerp(dim, target, t), text)
+                        if (ratio < worst) {
+                            worst = ratio
+                            worstWhere = "${theme(dark)}主题 $what t=$t（课程色 $accent）"
+                        }
+                    }
+                }
             }
+        }
+        assertTrue(
+            "换周渐变最差的一帧是 $worstWhere，只有 ${"%.2f".format(worst)}" +
+                "（下限 $MinTextContrast）—— 字色一旦跟着底色插值，这里会掉到 1 附近",
+            worst >= MinTextContrast,
+        )
+    }
+
+    /**
+     * 字色在两套色板角色里取的永远是**更暗**的那一支（这就是 [gridCardTextColor] 的规则）。
+     *
+     * 用真实的两套 scheme 各自断言一次：卡片底恒为浅色，深字才有对比度。
+     */
+    @Test
+    fun cardTextAlwaysPicksTheDarkerRole() {
+        listOf(LightColorScheme, DarkColorScheme).forEach { scheme ->
+            val picked = gridCardTextColor(scheme)
+            assertTrue(
+                "卡片字色 ${picked} 不是 onSurface / inverseOnSurface 里更暗的那一支" +
+                    "（onSurface=${scheme.onSurface}, inverseOnSurface=${scheme.inverseOnSurface}）",
+                relativeLuminance(picked) <= relativeLuminance(scheme.onSurface) &&
+                    relativeLuminance(picked) <= relativeLuminance(scheme.inverseOnSurface),
+            )
         }
     }
 
     /**
-     * 灰卡的**描边**只负责划分边界，不承载文字 —— 所以按图形算（≥ 3.0）而不是按小字算。
-     *
-     * 浅色主题刻意不描边（灰卡底本身就够沉），那时它是全透明的，跳过。
+     * 为什么门槛是 4.5 而不是「大字」的 3.0：卡上最大的课名也只有 10sp SemiBold。
+     * WCAG 只在「18pt 常规 / 14pt 加粗」以上才允许放宽到 3.0 —— 这条把两者的距离写下来，
+     * 免得下一个人觉得「10sp 加粗也算大字」从而顺手把门槛放宽。
      */
     @Test
-    fun dimCardOutlineIsAVisibleBoundaryInDarkTheme() {
-        val dim = courseCardDimFill(dark = true)
-        val outline = courseCardDimOutline(dark = true)
-        // 描边是半透明的：要按它**压在灰卡底上**之后的样子量
-        val composited = over(outline, outline.alpha, dim)
-        val ratio = contrastRatio(composited, dim)
+    fun nameTextIsSmallTextSoTheStrictThresholdApplies() {
+        val biggest = GridCardTier.entries.maxOf { gridCardStyle(it).nameFont.value }
         assertTrue(
-            "深色主题的灰卡描边要看得见（对灰卡底的对比度 ${"%.2f".format(ratio)} < $MinGraphicContrast）",
-            ratio >= MinGraphicContrast,
+            "课名最大字号 ${biggest}sp 仍远低于 WCAG 的「大字」门槛 ${WcagLargeBoldPt}pt —— " +
+                "所以卡片上所有文字都按小字算，门槛是 $MinTextContrast 而不是 3.0",
+            biggest < WcagLargeBoldPt,
         )
-        assertEquals("浅色主题靠底色本身划界，不额外描边", Color.Transparent, courseCardDimOutline(dark = false))
     }
 
     // ══════════════════ 辅助 ══════════════════
 
+    private fun theme(dark: Boolean) = if (dark) "深色" else "浅色"
+
     private fun assertReadable(where: String, background: Color, text: Color) {
         val ratio = contrastRatio(background, text)
         assertTrue(
-            "$where：字色压在底色上的对比度 ${"%.2f".format(ratio)} < $MinTextContrast（WCAG AA 正文小字）",
+            "$where：字色 $text 压在底色 $background 上的对比度 ${"%.2f".format(ratio)} " +
+                "< $MinTextContrast（WCAG AA 正文小字）",
             ratio >= MinTextContrast,
         )
     }
