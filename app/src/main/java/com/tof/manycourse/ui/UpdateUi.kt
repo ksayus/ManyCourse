@@ -33,6 +33,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.tof.manycourse.data.AppVersion
 import com.tof.manycourse.data.AvailableUpdate
 import com.tof.manycourse.data.UpdateCheckResult
 import com.tof.manycourse.data.UpdateConfig
@@ -203,6 +204,11 @@ private fun UpdateDialog(context: Context, update: AvailableUpdate) {
  * 设置页的「检查更新」卡片。
  *
  * 显示**当前版本**（用户核对"我装的是哪个"的唯一入口）与上一次检查的结果。
+ *
+ * ★ 当前版本走 [AppVersion.display]（**唯一口径**），**不是**读"上一次检查的结果"：
+ *   那个结果只有点过"检查更新"之后才存在，原先拿它当版本载体，
+ *   于是卡片一打开就显示"当前版本 读取失败"——而版本其实一直读得到
+ *   （开发者页读的就是同一份信息）。两件事必须解耦：版本是本机事实，检查结果是网络事实。
  */
 @Composable
 internal fun UpdateCheckCard() {
@@ -221,7 +227,7 @@ internal fun UpdateCheckCard() {
             )
             Spacer(Modifier.height(4.dp))
             Text(
-                text = "当前版本 ${result?.currentVersion ?: UpdateCheckerVersionFallback}",
+                text = "当前版本 ${AppVersion.display(context)}",
                 fontSize = 15.sp,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -331,9 +337,6 @@ internal fun UpdateSourceCard() {
         }
     }
 }
-
-/** 检查结果里没有当前版本时的兜底文案（正常情况读得到，这里只是别让界面空着）*/
-private const val UpdateCheckerVersionFallback = "读取失败"
 
 /** 用系统浏览器打开一个地址（失败就算了：这只是"拿不到包"时的出口）*/
 private fun Context.openUrl(url: String) {

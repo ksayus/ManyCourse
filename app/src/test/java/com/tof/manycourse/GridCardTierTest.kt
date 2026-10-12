@@ -20,7 +20,7 @@ import org.junit.Test
  *
  * ## 为什么值得单测
  *
- * 行高去掉下限之后（见 [gridRowHeight]），节次多的学校（广工 12 节）每格只有 30~35dp ——
+ * 行高去掉下限之后（见 [gridRowHeight]），块数多的学校 / 屏幕矮时每格只有 30~40dp ——
  * 卡片必须**跟着降级**，而不是被卡片下沿裁掉半截字。降级顺序是"先撤整项、再缩字号、
  * 最后才允许省略号"，三条都不能错：
  *
@@ -77,15 +77,17 @@ class GridCardTierTest {
     }
 
     @Test
-    fun 广工十二行的行高正好落在紧凑档() {
-        // 688dp 可用、12 行 → 57dp 一行；一格一节的课卡片就是 57dp。
-        // 这比"放得下地点带 + 一行课名"（约 45dp）高，所以地点带还在 ——
-        // 真机上广工那张卡是"课名 + 地点"两行，不是空的
-        val rowHeight = gridRowHeight(availableHeight = 688.dp, rowCount = 12)
-        assertTrue("广工的行高应该只有 50 多 dp", rowHeight.value < 60f)
+    fun 广工六块的行高正好落在紧凑档() {
+        // 688dp 可用、6 块 → 88dp 一行（被 MaxRowHeight 封顶）→ 卡片走宽松档。
+        // 真正压到 30~35dp 的是"块数多 + 矮屏"（例如默认表 8 块 + 320dp 可用 → 40dp）
+        val rowHeight = gridRowHeight(availableHeight = 688.dp, rowCount = 6)
+        assertEquals(GridCardTier.Full, gridCardTier(rowHeight, roomLine, nameLine))
+        // 矮屏上 8 块：320 ÷ 8 = 40dp → 仍放得下地点带（撤了地点带才是真正读不到课名的档）
+        val narrow = gridRowHeight(availableHeight = 320.dp, rowCount = 8)
+        assertTrue("窄屏上应该只有 40dp 上下一行", narrow.value < 45f)
         assertTrue(
-            "广工的行高必须还放得下地点带",
-            gridCardTier(rowHeight, roomLine, nameLine) != GridCardTier.UltraCompact,
+            "40dp 的行高必须还放得下地点带",
+            gridCardTier(narrow, roomLine, nameLine) != GridCardTier.UltraCompact,
         )
     }
 
@@ -119,7 +121,7 @@ class GridCardTierTest {
     fun 跨多行的卡片走宽松档() {
         // 连上四节的实验卡片本来就有 4 倍行高：不该按"行高矮"来判断，
         // 判断的输入必须是**卡片实高**（调用方传 rowHeight × span）
-        val rowHeight = gridRowHeight(availableHeight = 688.dp, rowCount = 12)
+        val rowHeight = gridRowHeight(availableHeight = 688.dp, rowCount = 6)
         assertEquals(GridCardTier.Full, gridCardTier(rowHeight * 4, roomLine, nameLine))
     }
 
@@ -145,7 +147,7 @@ class GridCardTierTest {
 
     @Test
     fun 撤掉地点带后课名区仍画得出一行() {
-        // 最紧凑档 + 30dp 卡片（广工 12 行在矮屏上的量级）：
+        // 最紧凑档 + 30dp 卡片（块数多 + 矮屏时的量级）：
         // 课名区 = 30dp（地点带 0），7.5sp 字（约 8.8dp 一行）→ 3 行
         val style = gridCardStyle(GridCardTier.UltraCompact)
         val nameArea = 30.dp - gridCardRoomBandHeight(style, roomLine)

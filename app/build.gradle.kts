@@ -32,7 +32,7 @@ android {
         // 第二个版本位是小版本更新,比如添加功能,数字增加的量代表新功能的数量
         // 第三个版本位是Bug修复,以及软件优化,数字代表已经修复的Bug和优化功能的数量
         // 第四个版本位是支持的学校数量
-        versionName = providers.gradleProperty("versionName").orNull ?: "1.5.1.3"
+        versionName = providers.gradleProperty("versionName").orNull ?: "1.5.2.3"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -148,6 +148,8 @@ dependencies {
     androidTestImplementation(libs.androidx.compose.ui.test.junit4)
     androidTestImplementation(libs.androidx.espresso.core)
     androidTestImplementation(libs.androidx.junit)
+    // createComposeRule() 要一个空白的 ComponentActivity 宿主（组件级插桩测试用）
+    androidTestImplementation(libs.androidx.compose.ui.test.manifest)
     debugImplementation(libs.androidx.compose.ui.test.manifest)
     debugImplementation(libs.androidx.compose.ui.tooling)
 }

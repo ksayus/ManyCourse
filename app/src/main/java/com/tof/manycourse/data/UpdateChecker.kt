@@ -1,8 +1,6 @@
 package com.tof.manycourse.data
 
 import android.content.Context
-import android.content.pm.PackageManager
-import android.os.Build
 import android.util.Log
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
@@ -72,22 +70,13 @@ object UpdateChecker {
     }
 
     /**
-     * 本机版本名（`1.2.0.3`）；读不到时给一个不可能被当成"新版本"的占位。
+     * 本机版本名（`1.5.1.3`）；读不到时给一个不可能被当成"新版本"的占位。
      *
-     * 走 `PackageManager` 而不是 `BuildConfig.VERSION_NAME`：后者要在模块里打开
-     * `buildFeatures { buildConfig = true }`，而这里只是想显示/比较一个字符串 ——
-     * 不值得为它改构建配置（`BuildConfig` 里其它字段本项目一个都没用）。
+     * ★ 取值口径收在 [AppVersion]（**唯一**）：本项目原先有三处各读一份，
+     * 而设置页那一处读的根本不是版本、是"上一次联网检查的结果"——
+     * 于是出现了"开发者页读得到、设置页显示读取失败"（详见 [AppVersion] 的 KDoc）。
      */
-    fun currentVersion(context: Context): String =
-        runCatching { versionNameOf(context) }.getOrNull().orEmpty().ifBlank { "0" }
-
-    private fun versionNameOf(context: Context): String? =
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            context.packageManager.getPackageInfo(context.packageName, PackageManager.PackageInfoFlags.of(0)).versionName
-        } else {
-            @Suppress("DEPRECATION") // 33 起换成了 PackageInfoFlags 那个重载，老机器仍要走这个
-            context.packageManager.getPackageInfo(context.packageName, 0).versionName
-        }
+    fun currentVersion(context: Context): String = AppVersion.nameOrFallback(context)
 
     /**
      * 检查更新。

@@ -37,6 +37,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.app.NotificationManagerCompat
+import com.tof.manycourse.data.AppVersion
 import com.tof.manycourse.data.CourseRepository
 import com.tof.manycourse.data.UiSettings
 import com.tof.manycourse.data.UpcomingClass
@@ -290,7 +291,7 @@ private fun DevToolsContent() {
             Column(Modifier.padding(16.dp)) {
                 InfoRow("应用包名", context.packageName)
                 Spacer(Modifier.height(8.dp))
-                InfoRow("应用版本", appVersion(context))
+                InfoRow("应用版本", AppVersion.display(context))
                 Spacer(Modifier.height(8.dp))
                 InfoRow("系统", "Android ${Build.VERSION.RELEASE}（SDK ${Build.VERSION.SDK_INT}）")
                 Spacer(Modifier.height(8.dp))
@@ -333,8 +334,3 @@ private fun tierName(tier: PresentationTier): String = when (tier) {
 /** `10-12 08:15` */
 private fun formatStamp(at: LocalDateTime): String =
     "%02d-%02d %02d:%02d".format(at.monthValue, at.dayOfMonth, at.hour, at.minute)
-
-private fun appVersion(context: android.content.Context): String = runCatching {
-    val info = context.packageManager.getPackageInfo(context.packageName, 0)
-    "${info.versionName}（${info.longVersionCode}）"
-}.getOrDefault("读不到")

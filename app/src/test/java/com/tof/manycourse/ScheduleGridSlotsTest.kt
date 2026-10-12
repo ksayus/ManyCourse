@@ -77,20 +77,22 @@ class ScheduleGridSlotsTest {
     /** 测试辅助：从 Block 里取出所有 GridCard（兼容旧的断言写法） */
     private val DaySlot.Block.cards: List<GridCard> get() = placed.map { it.card }
 
-    /** 测试辅助：用 GridCard 列表快速构造一个 Block（1 节 = 1 行，span = periodCount） */
+    /** 测试辅助：用 GridCard 列表快速构造一个 Block（一行 = 一个两节块，span = 跨几个块） */
     private fun testBlock(cards: List<GridCard>, rows: Int, startRow: Int = 0): DaySlot.Block =
         DaySlot.Block(
             placed = cards.map { card ->
                 DaySlot.PlacedCard(
                     card = card,
                     startRow = startRow,
-                    span = card.entry.periodCount,
+                    // 一行两节 → 跨几个块 = ceil(节数 / 2)
+                    span = (card.entry.periodCount + CourseRepository.PERIODS_PER_BLOCK - 1) /
+                        CourseRepository.PERIODS_PER_BLOCK,
                 )
             },
             rows = rows,
         )
 
-    /** 网格里的第几行（一行一节）= 一张卡片所在块的起始行；用来断言"卡片落在时间轴的正确位置上" */
+    /** 网格里的第几行（一行 = 一个两节块）= 一张卡片所在块的起始行；用来断言"卡片落在时间轴的正确位置上" */
     private fun rowOf(slots: List<DaySlot>, courseName: String): Int {
         var row = 1
         slots.forEach { slot ->
@@ -104,12 +106,12 @@ class ScheduleGridSlotsTest {
 
     @Test
     fun emptyDayFillsTheWholeAxisWithOneGap() {
-        assertEquals(listOf(DaySlot.Gap(5)), buildDaySlots(emptyList(), 5))
+        assertEquals(listOf(DaySlot.Gap(4)), buildDaySlots(emptyList(), 4))
     }
 
     @Test
     fun onePeriodCourseTakesExactlyOneRow() {
-        // 一行 = 一节：一节的课正好占满一行
+        // 一行 = 一个两节块：单节的课也占满它所在的那一个块（块内另一半空着）
         assertEquals(
             listOf(testBlock(listOf(vivid(1, "高等数学", 1, 1)), 1), DaySlot.Gap(9)),
             buildDaySlots(listOf(vivid(1, "高等数学", 1, 1)), 10),
@@ -117,10 +119,11 @@ class ScheduleGridSlotsTest {
     }
 
     @Test
-    fun twoPeriodCourseTakesTwoRows() {
-        // 连上两节（1-2）跨两行：一行一节，所以它占第 1、2 两行
+    fun twoPeriodCourseTakesExactlyOneRow() {
+        // ★ 连上两节（1-2）就是**一个块、一行**：课表页/作息表本来就是两节连排，
+        //   拆成两行画的是同一条信息（见 CalendarGridLayout.PeriodsPerRow）
         assertEquals(
-            listOf(testBlock(listOf(vivid(1, "连上两节的课", 1, 2)), 2), DaySlot.Gap(8)),
+            listOf(testBlock(listOf(vivid(1, "连上两节的课", 1, 2)), 1), DaySlot.Gap(9)),
             buildDaySlots(listOf(vivid(1, "连上两节的课", 1, 2)), 10),
         )
     }
@@ -135,8 +138,8 @@ class ScheduleGridSlotsTest {
             rowCount = 10,
         )
 
-        assertEquals("第 5 节 = 第 5 行", 5, rowOf(slots, "大学英语"))
-        assertEquals("第 9 节 = 第 9 行", 9, rowOf(slots, "程序设计"))
+        assertEquals("第 5-6 节 = 第 3 行", 3, rowOf(slots, "大学英语"))
+        assertEquals("第 9-10 节 = 第 5 行", 5, rowOf(slots, "程序设计"))
         assertEquals("整列必须正好铺满 10 行", 10, slots.sumOf { it.rows })
     }
 
@@ -153,7 +156,7 @@ class ScheduleGridSlotsTest {
 
         val block = slots.filterIsInstance<DaySlot.Block>().single()
         assertEquals(setOf("高等数学", "大学物理"), block.cards.map { it.entry.name }.toSet())
-        assertEquals(2, block.rows)
+        assertEquals(1, block.rows)
         assertEquals(10, slots.sumOf { it.rows })
     }
 
@@ -172,7 +175,7 @@ class ScheduleGridSlotsTest {
         val block = slots.filterIsInstance<DaySlot.Block>().single()
         assertEquals(1, rowOf(slots, "连上四节的实验"))
         assertEquals(1, rowOf(slots, "插在中间的一节"))
-        assertEquals(4, block.rows)
+        assertEquals("连上四节（第 1-4 节）= 两个块 = 两行", 2, block.rows)
         assertEquals(10, slots.sumOf { it.rows })
     }
 
@@ -197,12 +200,12 @@ class ScheduleGridSlotsTest {
 
     @Test
     fun adjacentCoursesDoNotOverlap() {
-        // 6-7节 + 8-9节：1 节 = 1 行，它们分别占第 5-6 行和第 7-8 行，
-        // 不共享任何一行，所以分成两个块，完全不重叠。
+        // 第 6 节与第 8 节**各在一个块里**（6 属 5-6 块、8 属 7-8 块）：
+        // 分别占第 3 行和第 4 行，不共享任何一行，所以分成两个块，完全不重叠
         val slots = buildDaySlots(
             listOf(
-                vivid(1, "课程A", startPeriod = 6, periodCount = 2),
-                vivid(2, "课程B", startPeriod = 8, periodCount = 2),
+                vivid(1, "课程A", startPeriod = 6, periodCount = 1),
+                vivid(2, "课程B", startPeriod = 8, periodCount = 1),
             ),
             rowCount = 10,
         )
@@ -213,18 +216,18 @@ class ScheduleGridSlotsTest {
         val blockA = blocks.single { it.cards.any { c -> c.entry.name == "课程A" } }
         val blockB = blocks.single { it.cards.any { c -> c.entry.name == "课程B" } }
 
-        assertEquals("课程A跨 2 行", 2, blockA.rows)
-        assertEquals("课程B跨 2 行", 2, blockB.rows)
+        assertEquals("第 6 节在 5-6 块里 → 占一行", 1, blockA.rows)
+        assertEquals("第 8 节在 7-8 块里 → 占一行", 1, blockB.rows)
 
-        // 验证位置：6-7节在第5-6行，8-9节在第7-8行（中间隔了 Gap）
-        assertEquals("第 6 节 = 第 6 行", 6, rowOf(slots, "课程A"))
-        assertEquals("第 8 节 = 第 8 行", 8, rowOf(slots, "课程B"))
+        // 验证位置：5-6 块是第 3 行，7-8 块是第 4 行（中间没有空行）
+        assertEquals("第 6 节 = 第 3 行", 3, rowOf(slots, "课程A"))
+        assertEquals("第 8 节 = 第 4 行", 4, rowOf(slots, "课程B"))
     }
 
     @Test
     fun dirtyPeriodNumbersAreClampedInsteadOfDropped() {
         // 教务系统解析出的脏数据（第 20 节 / 连上 99 节）不能让课从网格里消失：
-        // 先夹到合法范围再铺排（行数上限见 CalendarGridLayout 的 MaxGridRows）
+        // 先夹到合法范围再铺排（行的定义见 CalendarGridLayout.PeriodsPerRow）
         val slots = buildDaySlots(
             listOf(
                 vivid(1, "越界的课", startPeriod = 20, periodCount = 1),
@@ -259,15 +262,21 @@ class ScheduleGridSlotsTest {
     }
 
     @Test
-    fun rowsAreOnePeriodEach() {
-        // "每一节为一行"：行号 = 节次 - 1，行数 = 节次
+    fun rowsAreTwoPeriodBlocks() {
+        // ★ 「一行 = 一个两节块」：行号 = (节次 - 1) / 2，行数 = 覆盖到该节的块数。
+        //   这条与数据层的 `Timetable.blockIndexOf` 是**同一套坐标**（blockOf 直接转发它），
+        //   所以"第 11-12 节的课落在第 6 行"在 UI 与作息表上永远一致
         assertEquals(0, blockOf(1))
-        assertEquals(1, blockOf(2))
-        assertEquals(2, blockOf(3))
-        assertEquals(4, blockOf(5))
-        assertEquals(9, blockOf(10))
-        assertEquals(10, blocksOf(10))
+        assertEquals(0, blockOf(2))
+        assertEquals(1, blockOf(3))
+        assertEquals(1, blockOf(4))
+        assertEquals(2, blockOf(5))
+        assertEquals(4, blockOf(10))
+        assertEquals("第 16 节在最后一块（第 8 个块）", 7, blockOf(16))
+        assertEquals(8, blocksOf(16))
+        assertEquals(5, blocksOf(10))
         assertEquals("越界的节次也不能算出负行号", 0, blockOf(0))
+        assertEquals("块数与作息表一致", CourseRepository.BLOCK_COUNT, blocksOf(CourseRepository.MAX_PERIOD))
     }
 
     @Test
@@ -362,18 +371,18 @@ class ScheduleGridSlotsTest {
 
     @Test
     fun slotRowStartsCountsGridRowsInsteadOfSlotIndexes() {
-        // ★ 槽位下标 ≠ 网格行号：连上四节占四行，后面那块的下标是 1、网格行号却是 4。
-        //   用下标去铺"整行底色"/点亮时间轴，就会往上偏好多行
+        // ★ 槽位下标 ≠ 网格行号：连上四节占两个块（两行），后面那块的下标是 1、网格行号却是 2。
+        //   用下标去铺"整行底色"/点亮时间轴，就会往上偏
         val slots = buildDaySlots(
             listOf(
-                vivid(1, "连上四节的实验", startPeriod = 1, periodCount = 4), // 第 1-4 行
-                vivid(2, "下午的课", startPeriod = 5, periodCount = 2),        // 第 5-6 行
+                vivid(1, "连上四节的实验", startPeriod = 1, periodCount = 4), // 第 1-4 节 → 第 1-2 行
+                vivid(2, "下午的课", startPeriod = 5, periodCount = 2),        // 第 5-6 节 → 第 3 行
             ),
             rowCount = 10,
         )
 
-        assertEquals("块(四行) / 块(两行) / 空行(四行)", listOf(4, 2, 4), slots.map { it.rows })
-        assertEquals("第 2 块从**第 5 行**（下标 4）开始，不是下标 1", listOf(0, 4, 6), slotRowStarts(slots))
+        assertEquals("块(两行) / 块(一行) / 空行(七行)", listOf(2, 1, 7), slots.map { it.rows })
+        assertEquals("第 2 块从**第 3 行**（下标 2）开始，不是下标 1", listOf(0, 2, 3), slotRowStarts(slots))
         assertEquals("换算出来的行号不能越出这一列", 10, slots.sumOf { it.rows })
     }
 
@@ -387,7 +396,7 @@ class ScheduleGridSlotsTest {
 
         val mondayRow = slotRowStarts(monday)[0]
         val wednesdayRow = slotRowStarts(wednesday)[0]
-        assertEquals("两天的课确实同处一行（同节次）", mondayRow, wednesdayRow)
+        assertEquals("两天的课确实同处一行（同一个两节块）", mondayRow, wednesdayRow)
 
         val tapped = TappedCard(day = 0, row = mondayRow)
         assertTrue("点过的那张卡必须亮", isTappedCard(tapped, day = 0, row = mondayRow, dim = false))
@@ -403,12 +412,12 @@ class ScheduleGridSlotsTest {
     @Test
     fun tappingReportsTheGridRowSoTheRowHighlightStaysOnTheRightRow() {
         // 点卡片时上报的行号 = 网格行号（不是槽位下标）：这一天只排第 5-6 节，
-        // 槽位下标是 1、网格行号是 4 —— 上报错了，整行底色与时间轴就会亮在上面
+        // 槽位下标是 1、网格行号是 2 —— 上报错了，整行底色与时间轴就会亮在上面
         val slots = buildDaySlots(listOf(vivid(1, "下午的课", startPeriod = 5, periodCount = 2)), rowCount = 10)
 
         val slotIndex = slots.indexOfFirst { it is DaySlot.Block }
         assertEquals("卡片那一块的槽位下标", 1, slotIndex)
-        assertEquals("而网格行号是 4（第 5 节 = 第 5 行，0 起是 4）", 4, slotRowStarts(slots)[slotIndex])
+        assertEquals("而网格行号是 2（第 5-6 节 = 第 3 行，0 起是 2）", 2, slotRowStarts(slots)[slotIndex])
     }
 
     // ── 周次滑块的刻度 ─────────────────────────────────────────────────
@@ -514,7 +523,7 @@ class ScheduleGridSlotsTest {
     @Test
     fun timetableIsEightTwoPeriodBlocksOfSixteenPeriods() {
         // ★ 时刻表本身就是课表的骨架，钉死这 8 个两节块：改动它是刻意的，不该被顺手改掉
-        //   （注意：数据层仍然是"两节一块"，UI 层才是"一节一行"）
+        //   （数据层与 UI 层在这里是**同一套坐标**：一行 = 一个块）
         val expected = listOf(
             1 to "9:00~10:20",
             3 to "10:40~12:00",
@@ -619,7 +628,7 @@ class ScheduleGridSlotsTest {
 
     @Test
     fun axisSplitsTheBlockRangeIntoStartAndEnd() {
-        // ★ 三行写法（`9:00` / `第1-2节` / `10:20`）与区间写法必须永远指同一段时间：
+        // ★ 三行写法（`9:00` / `1-2节` / `10:20`）与区间写法必须永远指同一段时间：
         //   拆开是为了"在 40dp 宽的左轴上完整显示"（区间写法会被省略号截断）
         val expected = listOf(
             "9:00" to "10:20",
@@ -647,15 +656,37 @@ class ScheduleGridSlotsTest {
         assertEquals("", CourseRepository.blockEndTime(99))
     }
 
+    /**
+     * ★ 时间轴上的**块时刻**必须覆盖整个块（块内两节 + 它们之间的课间）。
+     *
+     * 这一条钉的是一个很容易写错的取法：块终点如果写成"块里**第一节**的结束"
+     * （`endOfPeriod(block * 2 + 1)` = `9:40`），时间轴那一格就与卡片实际占的 80 分钟
+     * 对不上了 —— 而且广工那种块内间隔 25 分钟的学校错得更明显。
+     */
+    @Test
+    fun axisBlockTimesCoverTheWholeBlock() {
+        (0 until CourseRepository.BLOCK_COUNT).forEach { block ->
+            val start = CourseRepository.blockStartTime(block)
+            val end = CourseRepository.blockEndTime(block)
+            assertEquals("块起点就是块内第一节的开始", CourseRepository.periodTime(block * 2 + 1), start)
+            assertEquals("块终点是块内第二节的结束", CourseRepository.periodEndTime(block * 2 + 2), end)
+            assertTrue(
+                "块终点必须晚于块内第一节的结束（要含课间）：第 $block 块 $start~$end",
+                LocalTime.parse(end.padStart(5, '0')) >
+                    LocalTime.parse(CourseRepository.periodEndTime(block * 2 + 1).padStart(5, '0')),
+            )
+        }
+    }
+
     @Test
     fun axisLabelsStayShortEnoughForTheNarrowLeftAxis() {
-        // 左轴只有 40dp 上下：三行文字里最长的是"第15-16节"（7 个字符）。
+        // 左轴只有 40dp 上下：三行文字里最长的是"15-16节"（6 个字符，参考图就是这么写的）。
         // 这条钉的是"轴宽是按最长那行实测出来的"这个前提 —— 哪天有人把节次写成
         // "第 15-16 节（20:30~21:50）"这种长文案，这里会立刻红
         val longest = (0 until CourseRepository.BLOCK_COUNT).maxOf { block ->
-            "第${block * 2 + 1}-${block * 2 + 2}节".length
+            "${block * 2 + 1}-${block * 2 + 2}节".length
         }
-        assertEquals(7, longest)
+        assertEquals(6, longest)
         (0 until CourseRepository.BLOCK_COUNT).forEach { block ->
             assertTrue("开始时刻要短", CourseRepository.blockStartTime(block).length <= 5)
             assertTrue("结束时刻要短", CourseRepository.blockEndTime(block).length <= 5)
@@ -666,27 +697,27 @@ class ScheduleGridSlotsTest {
 
     @Test
     fun gridRowCountStopsAtTheLastCourseOfTheWholeSemester() {
-        // 课表只排到下午（第 10 节）→ 10 行，末尾空行不再占地方
-        assertEquals(10, gridRowCount(listOf(listOf(dim(1, "高数", 9, 2)), listOf(dim(2, "英语", 1, 2)))))
-        // 有晚自习（第 16 节）→ 16 行
-        assertEquals(16, gridRowCount(listOf(listOf(dim(3, "晚课", 15, 2)))))
-        // 连上四节（第 5-8 节）→ 铺到第 8 行
-        assertEquals(8, gridRowCount(listOf(listOf(dim(4, "实验", 5, 4)))))
+        // 课表只排到第 9-10 节（第 5 个块）→ 5 行，末尾空块不再占地方
+        assertEquals(5, gridRowCount(listOf(listOf(dim(1, "高数", 9, 2)), listOf(dim(2, "英语", 1, 2)))))
+        // 有晚自习（第 15-16 节 = 第 8 个块）→ 8 行
+        assertEquals(8, gridRowCount(listOf(listOf(dim(3, "晚课", 15, 2)))))
+        // 连上四节（第 5-8 节）→ 铺到第 4 个块
+        assertEquals(4, gridRowCount(listOf(listOf(dim(4, "实验", 5, 4)))))
     }
 
     @Test
     fun gridRowCountKeepsMiddlesGapsAndGuardsDirtyData() {
-        // 中间的空行照画（第 1 节有课、第 9 节有课 → 仍是 10 行）：
+        // 中间的空行照画（第 1 块有课、第 5 块有课 → 仍是 5 行）：
         // 只有**末尾**的空行才是纯浪费，中间的空行是"这个时段空着"的信息
-        assertEquals(10, gridRowCount(listOf(listOf(dim(5, "早课", 1, 2), dim(6, "下午课", 9, 2)))))
-        // 一节单独的课（第 7 节）→ 落在第 7 行
-        assertEquals(7, gridRowCount(listOf(listOf(dim(7, "单节", 7, 1)))))
-        // 脏数据：第 99 节被夹回最后一行，不会把网格撑成几十行
-        assertEquals(16, gridRowCount(listOf(listOf(dim(8, "脏数据", 99, 2)))))
+        assertEquals(5, gridRowCount(listOf(listOf(dim(5, "早课", 1, 2), dim(6, "下午课", 9, 2)))))
+        // 一节单独的课（第 7 节）落在第 4 个块里 → 4 行
+        assertEquals(4, gridRowCount(listOf(listOf(dim(7, "单节", 7, 1)))))
+        // 脏数据：第 99 节被夹回最后一个块，不会把网格撑成几十行
+        assertEquals(8, gridRowCount(listOf(listOf(dim(8, "脏数据", 99, 2)))))
         // 越界的节次（0 / 负数）当成第 1 节，不会算出 0 行导致整块网格消失
         assertEquals(1, gridRowCount(listOf(listOf(dim(9, "越界", 0, 1)))))
         // 整周一张卡都没有 → 退回"整张时刻表"（此时页面显示的是"该周暂无课表数据"占位）
-        assertEquals(16, gridRowCount(listOf(emptyList(), emptyList())))
+        assertEquals(8, gridRowCount(listOf(emptyList(), emptyList())))
     }
 
     @Test
@@ -703,20 +734,20 @@ class ScheduleGridSlotsTest {
         )
     }
 
-    // ── 行数上限跟着**学校**的节数走（广工 12 节 → 最多 12 行） ──────────────
+    // ── 行数上限跟着**学校**的节数走（广工 12 节 = 6 块 → 最多 6 行） ──────────
 
     @Test
-    fun gridStopsAtTwelvePeriodsAtGdut() {
+    fun gridStopsAtSixBlocksAtGdut() {
         // ★ 广工作息到第 12 节（学校课表页渲染的那 14 行是教务系统的**固定模板**，
-        //   见 `Timetables.gdut` 的注释）：网格最多 12 行，第 13 节往后一律夹到第 12 行 ——
-        //   不能因为默认表有 16 节就替广工多画四行不存在的时间段
+        //   见 `Timetables.gdut` 的注释）：网格最多 6 行，第 13 节往后一律夹到最后一块 ——
+        //   不能因为默认表有 8 块就替广工多画两个不存在的时间段
         withSchool("gdut") {
-            assertEquals("第 11-12 节 = 第 12 行", 12, gridRowCount(listOf(listOf(dim(2, "下午最后一节", 11, 2)))))
-            assertEquals("第 13 节不存在 → 夹到第 12 行", 12, gridRowCount(listOf(listOf(dim(1, "晚课", 13, 2)))))
-            assertEquals("脏数据（第 99 节）也夹到第 12 行", 12, gridRowCount(listOf(listOf(dim(3, "脏数据", 99, 2)))))
+            assertEquals("第 11-12 节 = 第 6 行", 6, gridRowCount(listOf(listOf(dim(2, "下午最后一节", 11, 2)))))
+            assertEquals("第 13 节不存在 → 夹到第 6 行", 6, gridRowCount(listOf(listOf(dim(1, "晚课", 13, 2)))))
+            assertEquals("脏数据（第 99 节）也夹到第 6 行", 6, gridRowCount(listOf(listOf(dim(3, "脏数据", 99, 2)))))
             assertEquals(
-                "整周没课 → 退回这所学校的整张时刻表（12 行，而不是 16 行）",
-                12,
+                "整周没课 → 退回这所学校的整张时刻表（6 行，而不是 8 行）",
+                6,
                 gridRowCount(listOf(emptyList(), emptyList())),
             )
         }
@@ -724,10 +755,10 @@ class ScheduleGridSlotsTest {
 
     @Test
     fun theSameCourseFallsOnDifferentRowsAtDifferentSchools() {
-        // 同一门"第 5-6 节"的课：默认表与广工表都一样（一节一行、从第 1 行数起）——
-        // 这条钉的是"行的定义（一节一行）与学校无关，只有**总行数**随学校变"
-        withSchool(null) { assertEquals(6, gridRowCount(listOf(listOf(dim(1, "下午课", 5, 2))))) }
-        withSchool("gdut") { assertEquals(6, gridRowCount(listOf(listOf(dim(1, "下午课", 5, 2))))) }
+        // 同一门"第 5-6 节"的课：默认表与广工表都落在第 3 行（一行两节、行号从 1 数起）——
+        // 这条钉的是"行的定义（一行一个两节块）与学校无关，只有**总行数**随学校变"
+        withSchool(null) { assertEquals(3, gridRowCount(listOf(listOf(dim(1, "下午课", 5, 2))))) }
+        withSchool("gdut") { assertEquals(3, gridRowCount(listOf(listOf(dim(1, "下午课", 5, 2))))) }
     }
 
     /**

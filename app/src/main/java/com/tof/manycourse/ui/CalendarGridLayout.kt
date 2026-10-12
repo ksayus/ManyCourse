@@ -11,6 +11,7 @@ import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -110,15 +111,15 @@ private val AxisTextHardMax = 52.dp
  *
  * | 候选 | 中间那行 / 那两行时刻 | 9sp 下约需 |
  * |---|---|---|
- * | ① 9sp + `第1-2节` | 最正式 | 46dp+ |
- * | ② 9sp + `1-2节` | 省掉「第」字，仍然一眼可读 | 34dp |
- * | ③ 8sp + `1-2节` | 系统字号调大时的退档 | 30dp |
+ * | ① 9sp + `1-2节` | **参考图的写法**，省掉「第」字 | 35dp |
+ * | ② 9sp + `第1-2节` | 轴宽有富余时才用（更正式，但本机字号下超上限） | 46dp+ |
+ * | ③ 8sp + `1-2节` | 系统字号调大时的退档 | 31dp |
  *
  * 三行都**必须完整显示**：所以轴宽是"实测最宽那行 + 留白"，不是写死的常数。
  */
 private val AxisCandidates = listOf(
-    AxisLabelStyle to true,
     AxisLabelStyle to false,
+    AxisLabelStyle to true,
     AxisLabelStyleCompact to false,
 )
 
@@ -128,7 +129,7 @@ private val AxisCandidates = listOf(
  * ## ★ 为什么只有上限、**没有下限**
  *
  * 早先这里是 `(maxHeight ÷ rowCount).coerceIn(MinRowHeight, MaxRowHeight)`。那个下限
- * 正是"内容超出屏幕"的唯一来源：节次多（广工 12 行）或屏幕矮时，`rowCount × 下限`
+ * 正是"内容超出屏幕"的唯一来源：块数多（广工 6 块）或屏幕矮时，`rowCount × 下限`
  * 已经比 `maxHeight` 还大，于是 [GridBody] 只能挂一层内部滚动兜底 ——
  * 而周视图的承诺是"整周一眼看完、手指往下滑屏幕不动"，一挂滚动这条承诺就破了
  * （用户滑到的是一张比屏幕更高的课表，星期表头也跟着被推走）。
@@ -136,11 +137,11 @@ private val AxisCandidates = listOf(
  * 现在下限删掉了：**总高恒等于 `可用的高 ÷ 行数 × 行数 ≤ 可用高`**，
  * 放不下时不再"滚"，而是让**骨架自己降级**（[GridAxisLabels.lineCount] 减行、
  * [gridCardTier] 退档），因为"一屏看完"比"每行都够高"重要得多 ——
- * 位置本身就是信息（第几行 = 第几节），看不全就等于看不出来。
+ * 位置本身就是信息（第几行 = 第几个块），看不全就等于看不出来。
  *
  * ## 上限为什么留着
  *
- * 课少的时候（整个学期只排到第 6 节 → 6 行）除以 6 会得到 100dp 上下的一行，
+ * 课少的时候（整个学期只排到第 3 块 → 3 行）除以 3 会得到 100dp 上下的一行，
  * 三行时间轴与一张只有课名的卡片被拉到整屏 —— 那是"空壳"，不是"更大"。
  * 到 [MaxRowHeight] 就停住，多出来的高度由 [GridBody] 的居中吸收。
  */
@@ -159,8 +160,8 @@ private val FallbackRowHeight = MaxRowHeight
  *
  * ★ 它**不参与判定** —— 门槛由 [gridCardTier] 按当前字体度量现算（写死 dp 的话，
  * 系统字号一调大，"放得下"就变成"刚好放不下"）。留在这里是因为它是
- * `GridCardTierTest` 里那组边界断言的来历：8 行的密课表每格 46dp 上下，
- * 广工 12 行只有 30~35dp，描述的就是这两个数。
+ * `GridCardTierTest` 里那组边界断言的来历：8 块（16 节）的密课表每块 47dp 上下，
+ * 广工 6 块只有 55~60dp，描述的就是这两个数。
  */
 private val CompactCardRowHeight = 62.dp
 
@@ -175,22 +176,22 @@ private val CompactCardRowHeight = 62.dp
  * ## 为什么**不能有下限**
  *
  * 上下限同时存在时，`行高 × 行数` 会被下限顶到超出可用高度 —— 这正是周视图
- * 早先必须挂一层内部滚动的原因（节次多的学校 / 矮屏）。而周视图的承诺是
+ * 早先必须挂一层内部滚动的原因（块数多的学校 / 矮屏）。而周视图的承诺是
  * **"整周一眼看完，手指往下滑屏幕不动"**：一旦有滚动，滑走的不只是课程，
- * 连星期表头都会跟着走，"第几行 = 第几节"这个坐标系就散了。
+ * 连星期表头都会跟着走，"第几行 = 第几个块"这个坐标系就散了。
  *
  * 所以放不下时**不滚、也不裁**，而是让骨架降级：时间轴减行（[axisLabelsFor]）、
  * 卡片退到最紧凑档（[gridCardTier]）。
  *
  * ## 为什么留上限
  *
- * 课少（整个学期只排到第 6 节 → 6 行）时除以 6 会得到 100dp 上下一行，
+ * 课少（整个学期只排到第 3 块 → 3 行）时除以 3 会得到 100dp 上下一行，
  * 三行小字与一张只有课名的卡片被拉到整屏 —— 那是空壳不是"更大"。
  *
  * ## 除不尽的余数去哪了
  *
  * 先除、再**向下取整到 0.5dp**：取整只会让总高更小，所以 `行数 × 行高 ≤ 可用高度`
- * 这条不变式**不依赖**取整方式。除不尽的余数（例如 16 行 ÷ 688dp 余 16dp）由
+ * 这条不变式**不依赖**取整方式。除不尽的余数（例如 8 行 ÷ 383dp 余 7dp）由
  * [GridBody] 的 `contentAlignment = Center` 上下均分吸收 ——
  * 这正是"没有滚动"能成立的原因：**内容永远不会比槽位更高**。
  *
@@ -231,12 +232,12 @@ private val AxisLabelLineSpacing = 2.dp
 /**
  * 行高不够时**自动减行**（纯函数，`GridRowHeightTest` 钉住）。
  *
- * 三行小字（`9:00` / `第1节` / `9:40`）至少需要 `3 × 行高 + 2 × 行间距`。
+ * 三行小字（`9:00` / `1-2节` / `10:20`）至少需要 `3 × 行高 + 2 × 行间距`。
  * 塞不下时**整行去掉起止时刻**，只留节次：
  *
- *  - 节次**不能丢** —— 它是这张网格的唯一坐标（"第几行 = 第几节"，见 §2.5）；
+ *  - 节次**不能丢** —— 它是这张网格的唯一坐标（"第几行 = 第几个块"，见 §2.5）；
  *  - 时刻**可以丢** —— 那个块没收录作息时它本来就是空的，而且能从节次推出来；
- *  - **绝不允许溢出到相邻行**：相邻行是**别的节次**，溢出等于把刻度本身画错。
+ *  - **绝不允许溢出到相邻行**：相邻行是**别的块**，溢出等于把刻度本身画错。
  *
  * @param rowHeight 当前行高（[gridRowHeight] 算出）
  * @param lineHeight 当前档位一行文字的高度（`sp.toDp()`，已含 `fontScale`）
@@ -251,24 +252,41 @@ internal fun axisLabelsFor(rowHeight: Dp, lineHeight: Dp): GridAxisLabels {
 }
 
 /**
- * **一行 = 一节课**（1 / 2 / 3 / …；最后一行到第几节由**学校**的节次表决定 ——
- * 默认 16 节，广工 12 节，见 `Timetable`）。
+ * **一行 = 一个"两节块"**（`1-2` / `3-4` / `5-6` …）。
  *
- * 1 节 = 1 行，保证相邻的课（如 6-7 节与 8-9 节）完全错开、不重叠。
+ * ## ★ 行粒度由这里决定，而它必须跟着**学校的节次表**走
+ *
+ * 课表本身就是两节连排（[Timetable] 是按"两节块"存的：块起点、块终点、
+ * 块内第二节的开始时刻），所以周视图一行正好画一个块：
+ *
+ * | | 行数与行标签 | 时间轴一行写什么 |
+ * |---|---|---|
+ * | 默认表（广软/金城，16 节 = 8 块） | 8 行：`1-2节` … `15-16节` | 块起点 `9:00` / `1-2节` / 块终点 `10:20` |
+ * | 广工（12 节 = 6 块） | 6 行：`1-2节` … `11-12节` | 块起点 `8:30` / `1-2节` / 块终点 `10:05` |
+ *
+ * 取 [CourseRepository.PERIODS_PER_BLOCK]（而不是写死 1 或 2）的理由：行空间必须与
+ * `Timetable.blockIndexOf` 是**同一套坐标** —— 现在两边都是"每块两节"，
+ * 哪天某个学校变成三节一块，行数、行标签、块时刻会一起跟着变，不会只改一半。
+ *
+ * ## 为什么不是"一行一节"（曾经的一版）
+ *
+ * 一行一节时 16 节 = 16 行，一行只有 20dp 上下：卡片被压到最紧凑档（撤掉地点带）、
+ * 时间轴连"起止时刻"都放不下（减行到只剩节次）。而**块内两节本来就是连续的 80 分钟**，
+ * 拆成两行画的是同一条信息，白白多花一倍行数。
  */
-private const val PeriodsPerRow = 1
+private val PeriodsPerRow: Int get() = CourseRepository.PERIODS_PER_BLOCK
 
 /** 星期表头高度（左侧时间轴要空出同高的占位才对得齐）：够放下「周一 + 14」两行即可 */
 private val HeaderHeight = 40.dp
 
 /**
- * 网格最多画多少行（= 总节数）。
+ * 网格最多画多少行（= 这所学校一天有几个"两节块"）。
  *
- * **不能写成常量**：节数按学校不同（默认 16 节；广工 12 节，见 `Timetable`）
- * —— 写死一个 16 会让广工多画四行不存在的时间段。
+ * **不能写成常量**：块数按学校不同（默认 8 块；广工 6 块，见 `Timetable`）
+ * —— 写死一个 8 会让广工多画两个不存在的块。
  * 这里取上限只是防脏数据把行数撑爆（见 [buildDaySlots] 的夹取规则）。
  */
-private val MaxGridRows: Int get() = CourseRepository.MAX_PERIOD
+private val MaxGridRows: Int get() = CourseRepository.BLOCK_COUNT
 
 /** 在网格上左右滑动换周的门槛：滑动幅度不到这个值就当误触（避免翻页时蹭到就换周） */
 private val SwipeWeekThreshold = 56.dp
@@ -281,10 +299,146 @@ private val SwipeWeekThreshold = 56.dp
  */
 private const val CardStateLegend = "亮 = 本周会上 · 灰 = 本周不上 · 左右滑动换周"
 
-/** 非本周的卡片底色（灰调）：`亮的=这一周真的会上`、`灰的=整学期课表里有但不在这周` */
-private val DimCardTint = Color(0x0F0F172A)
-private val DimCardFooterTint = Color(0x140F172A)
+// ══════════════════ 卡片面貌：填充色块 + 白字（对齐参考图） ══════════════════
+//
+// ★ 这一段只有一个取舍，写在最前面（`GridCardContrastTest` 把这套数逐条钉住）。
+//
+// ## 一、亮卡的底色必须"压一档"，否则白字没有一个课程色配得上
+//
+// 参考图的卡片是**填充色块 + 白字**，而课程色令牌（`CourseDotColors`）原本是给
+// 圆点/色条用的 500 档高饱和色。白字压在原色上的 WCAG 对比度实测：
+//
+// | 色 | 原色 | 配白字 | 压 44% 后 | 配白字 |
+// |---|---|---|---|---|
+// | blue/emerald/amber/rose/sky 500 | `#3B82F6` … `#0EA5E9` | **2.15 ~ 3.68**（全部不达标） | `#21498A` … | **6.0 ~ 8.9** |
+//
+// 压深用的是"课程色 + 近黑"的**同一个混色公式**，五门课一视同仁 —— 没有为任何一门课换
+// 调色板，只是把"色块"这一种用法定下来。副产品是更像参考图：参考图那几张卡的实测像素
+// （`#2F5876` / `#167360` / `#6E4705`）正是 500 档压深之后的量级。
+//
+// ## 二、字色是**纯白**、而且是常数 —— 换周时只有底色在动
+//
+// 这一条是"任何一帧都读得清"的关键，也是本轮改了三版才定下来的地方：
+//
+//  1. 灰卡与亮卡的底色一浅一深。如果让**字色跟着底色一起插值**，中间必然有一帧
+//     两者亮度相等 —— 那一帧对比度**恒等于 1.0**（实测那一版五门课在渐变中段都掉到
+//     1.5，表现是"换周时课名先糊掉、再重新出现"）；
+//  2. 那么"每帧按对比度现算一支字色"行不行？也不行：灰卡是浅底深字、亮卡是深底白字，
+//     两者要求相反，而**中间必然经过一条"深字与白字都刚够 4.5"的缝**
+//     （实测那样写出来只有 4.24，够不到 4.5）；
+//  3. 唯一能让"字色恒定 + 整条路径都达标"成立的办法是：**把灰卡也做成深色**。
+//     于是白字在灰卡与亮卡上都达标，底色单调变深，对比度只升不降。
+//
+// 代价如实写在这里：浅色主题下"这一周不上"的灰卡**不再是浅色**，而是一块中等偏深的
+// 中性色（`#6A6F7B`）。它仍然是"淡"的（低饱和的中性色 vs 亮卡的饱和课程色），
+// 但不再是上一版那种近乎透明的浅灰。**"填充色块 + 白字"与"灰卡是浅色"在 WCAG AA 下
+// 不可兼得** —— 这是本轮唯一一处为了可读性而改观感的地方。
+//
+// 实测（五个课程色取最差的一个）：
+//
+// | 主题 | 灰卡底 | 亮卡底 | 字色 | 灰卡端 | 亮卡端 | 渐变最低点 |
+// |---|---|---|---|---|---|---|
+// | 浅色 | `#6A6F7B` | 课程色 ×0.56 | 白 | 5.0 | 6.0 | 5.0 |
+// | 深色 | `#080C15` | 课程色 ×0.56 | 白 | 19.6 | 6.0 | 6.0 |
 
+/** 亮卡底 = 课程色混 44% 近黑（压深之后白字才读得清）*/
+private const val CardFillDarken = 0.44f
+
+/** 地点带在卡底上再叠多少近黑（同色系更沉，参考图里那条地点带就是这么来的）*/
+private const val RoomBandOverlay = 0.22f
+
+/** 浅色主题：灰卡底 = 近黑 62% 叠在白色页面上（深到承得住白字，见本节第二条取舍）*/
+private const val DimFillAlphaLight = 0.62f
+
+/** 深色主题：灰卡底 = 近黑 50% 叠在深色页面上（比页面底更沉，卡片才有边界）*/
+private const val DimFillAlphaDark = 0.50f
+
+/** 深色主题下灰卡的描边：比灰卡底亮一档，把卡片从页面底上划出来 */
+private const val DimOutlineAlphaDark = 0.55f
+
+/**
+ * 页面的"基准底色"：合成灰卡底、量对比度时压的那一层（**对外可见**，单测读它）。
+ *
+ * 与 `ColorScheme.background` 取值一致（浅色纯白 / 深色 `#0F172A`），
+ * 但**不读 `MaterialTheme`** —— 这一节的颜色纯函数要能在 JVM 单测里直接调用，
+ * 不能依赖组合环境。
+ */
+internal fun pageBase(dark: Boolean): Color = if (dark) Color(0xFF0F172A) else Color(0xFFFFFFFF)
+
+/** 灰卡底那层叠色：两个主题都压近黑（浅色页面压出中灰、深色页面压出更沉的一档）*/
+internal fun dimFillTint(dark: Boolean): Color = Color(0xFF0F172A)
+/** 灰卡底那层叠色的 alpha（见 [dimFillTint]）*/
+internal fun dimFillAlpha(dark: Boolean): Float = if (dark) DimFillAlphaDark else DimFillAlphaLight
+
+/**
+ * 亮卡（这一周会上）的填充底色：**课程色压深一档**（纯函数，单测钉住）。
+ *
+ * 两个主题用同一个压深比例：课程色令牌本来就只有一套（它不属于"配色预设"那一维），
+ * 压深后的色块在深色页面上依然浮得出来，白字在两边也都达标（见本节开头的表）。
+ *
+ * 底色**不透明**是刻意的：半透明的话它下面压着什么会跟着透出来，
+ * 白字的实际对比度就变成"取决于背后画了什么"（量不准、也守不住）。
+ */
+internal fun courseCardFill(accent: Color): Color = lerp(accent, Color.Black, CardFillDarken)
+
+/** 地点带底色：亮卡底再叠一层近黑（越叠越暗，于是地点那行字只会更清楚）*/
+internal fun courseCardRoomBand(accent: Color): Color =
+    over(Color.Black, RoomBandOverlay, courseCardFill(accent))
+
+/**
+ * 灰卡（这一周不上 / 放假）的底色（**不透明**，纯函数，单测钉住）。
+ *
+ * 刻意**与课程色无关**：灰底一旦随课程色变亮变暗，白字的对比度就跟着漂
+ * （有的课达标、有的不达标）。中性之后"亮↔灰"这条通路只剩下一个变量 —— 底色。
+ */
+internal fun courseCardDimFill(dark: Boolean): Color =
+    over(dimFillTint(dark), dimFillAlpha(dark), pageBase(dark))
+
+/**
+ * 卡片上的字色：**纯白**（唯一的取值口径，绘制与对比度单测都读它）。
+ *
+ * 为什么不是 `colorScheme.onPrimary`：色块是**课程色**（与配色预设无关），
+ * 而 `onPrimary` 随配色预设变 —— 两者挂钩的话，换个预设就会让同一张卡的字色变一次，
+ * 而"白字压深色块"在任何预设下都成立（见本节开头的实测表）。
+ */
+internal val GridCardTextOnFill = Color.White
+
+/**
+ * 灰卡的描边：深色主题下靠它把卡片从页面底上划出来；
+ * 浅色主题的灰卡本来就比页面底深得多，不需要再加一圈边。
+ */
+internal fun courseCardDimOutline(dark: Boolean): Color =
+    if (dark) Color.White.copy(alpha = DimOutlineAlphaDark) else Color.Transparent
+
+/**
+ * 把 [top] 按 [alpha] 合成到 [base] 上（对比度只能量**合成之后**的颜色）。
+ *
+ * 与 `GlassPaletteContrastTest` 里的 `GlassTestColors.over` 是同一个公式，
+ * 但那一份在 **test** 源集里（主源集不能反向依赖）；这里要在运行时用它算出灰卡底色，
+ * 所以两边各留一份、由 `GridCardContrastTest` 断言两种口径一致。
+ */
+internal fun over(top: Color, alpha: Float, base: Color): Color = Color(
+    red = top.red * alpha + base.red * (1f - alpha),
+    green = top.green * alpha + base.green * (1f - alpha),
+    blue = top.blue * alpha + base.blue * (1f - alpha),
+    alpha = 1f,
+)
+
+/** WCAG 2.x 相对亮度（透明色请先 [over] 合成）*/
+internal fun relativeLuminance(color: Color): Double {
+    fun channel(raw: Float): Double {
+        val c = raw.toDouble()
+        return if (c <= 0.03928) c / 12.92 else Math.pow((c + 0.055) / 1.055, 2.4)
+    }
+    return 0.2126 * channel(color.red) + 0.7152 * channel(color.green) + 0.0722 * channel(color.blue)
+}
+
+/** WCAG 对比度 `(L1 + 0.05) / (L2 + 0.05)`，L1 是较亮的一方 */
+internal fun contrastRatio(a: Color, b: Color): Double {
+    val la = relativeLuminance(a)
+    val lb = relativeLuminance(b)
+    return (maxOf(la, lb) + 0.05) / (minOf(la, lb) + 0.05)
+}
 /** 同一格里叠了好几张时，后面那几张往右下缩一点露出个边（提示"这里不止一门课"） */
 private val StackedCardInset = 2.5.dp
 
@@ -309,31 +463,34 @@ private val CardInnerVerticalPadding = 8.dp
  *   第3周   9月14日 ~ 20日              ← 周次滑块（拖动 / 左右滑动都能换周）
  *   ●━━━━━━━━━━━━━━━━━━━━━━━━━
  *  ┌───────────────────────────────────────────────────────────┐
- *  │ 9月 │ 周一 14 │ 周二 15 │ 周三 16 │ 周四 17 │ …             │  ← 今天那格是实心蓝胶囊
+ *  │ 10月 │ 周一 12 │ 周二 13 │ 周三 14 │ 周四 15 │ …            │  ← 今天那格是实心蓝胶囊
  *  │─────┼─────────┼─────────┼─────────┼─────────┼──────────────│
- *  │ 9:00│  ▍高等数学（亮）        ▍军事理论（灰）               │  ┐
- *  │第1-2│   A-101                  T301                         │  │ 一行 = 两节
+ *  │ 9:00│ ▓大学英语▓（亮：填充色 + 白字）  ░军事理论░（灰）      │  ┐
+ *  │ 1-2节│ ▓笃行楼U…▓                              ░笃行楼T…░   │  │ 一行 = 两节
  *  │10:20│                                                      │  ┘
  *  │10:40│ …                                                     │
  *  └───────────────────────────────────────────────────────────┘
  * ```
  *
  * ## 三层结构，各管一件事
- *  - **时间轴为骨架**：左轴每一行最多**三行小字** = 开始时刻 / 第 N 节 / 结束时刻
- *    （如 `9:00` / `第1节` / `9:40`；横线是它的刻度）。拆三行是因为
+ *  - **时间轴为骨架**：左轴每一行最多**三行小字** = 块起点 / `N-M节` / 块终点
+ *    （如 `9:00` / `1-2节` / `10:20`；横线是它的刻度）。拆三行是因为
  *    `9:00~10:20` 这种区间写法在 40dp 出头的窄轴上会被省略号截断（"时间显示不全"）；
  *    行高不够时**自动减行**（只留节次，见 [axisLabelsFor]）。
- *    卡片的纵向位置直接由节次决定，所以卡片上**不再写时间**（位置就是时间）；
+ *    卡片的纵向位置直接由块决定，所以卡片上**不再写时间**（位置就是时间）；
  *  - **二维网格为容器**：一列一天（七列等宽铺满整屏，不横滚 —— 周视图要能一眼看全周）、
- *    **一行一节**（1 / 2 / 3 / …），`哪一节 × 星期几` 唯一确定一个格子；
- *  - **卡片为课程载体**：课程色块 + 课名 + 底部地点带，颜色走
- *    `CourseRepository.colorOfName(课名)`，与课表页/月历列表/圆点同色。
+ *    **一行一个「两节块」**（`1-2` / `3-4` / `5-6` …，见 [PeriodsPerRow]），
+ *    `哪个块 × 星期几` 唯一确定一个格子；
+ *  - **卡片为课程载体**：**填充色块 + 白字** + 底部地点带（与参考图一致），颜色走
+ *    `CourseRepository.colorOfName(课名)`，与课表页/月历列表/圆点同色；
+ *    色块会按 [CardFillDarken] 统一压深一档 —— 那是白字达标的**前提**，
+ *    不是另一套调色板（比对度护栏见 `GridCardContrastTest`）。
  *
  * ## 整周一眼看完：**任何地方都不滚动**，行高跟着屏幕走
  *
  * 调用方给 `weight(1f)`（高度有界），于是：
- *  - **行数**只算"整个学期真的排过课"的行（[gridRowCount]）：排到下午就是 5 行、有晚自习才 8 行；
- *    上限是**这所学校的节数**（默认 16 节，广工 12 节，见 `Timetable`）；
+ *  - **行数**只算"整个学期真的排过课"的块（[gridRowCount]）：排到下午就是 3 行、有晚自习才 8 行；
+ *    上限是**这所学校的块数**（默认 8 块，广工 6 块，见 `Timetable`）；
  *  - **行高** = 网格剩多少高 ÷ 行数（[gridRowHeight]，**只封上限 [MaxRowHeight]，没有下限**）。
  *
  * ★ **"总高恒 ≤ 可用高度"是这条承诺的全部依据**（`GridRowHeightTest` 钉住）：
@@ -341,18 +498,18 @@ private val CardInnerVerticalPadding = 8.dp
  * 放不下时降级的是**骨架**（时间轴减行 [axisLabelsFor]、卡片退档 [gridCardTier]），
  * 不是"多出来的部分滑一下就能看到"。
  *
- * 于是课表排到晚自习、或者广工那种 12 节，也是**一屏看完**；
- * 卡片长到该长的大小（5 行时约 47×86dp；12 行时约 47×35dp 走最紧凑档）。
+ * 于是课表排到晚自习、或者广工那种 6 块，也是**一屏看完**；
+ * 卡片长到该长的大小（3 块时约 47×80dp；16 节 8 块时约 47×47dp，课名两行 + 地点带还在）。
  *
  * ## 同一格里的多门课：叠着放，该显示的那张压在最前面
  *
- * 一格（同一天 + 同两节）常有多门课 —— 因为"画布"是整学期课表，不同周次会共用同一个时间。
+ * 一格（同一天 + 同一个块）常有多门课 —— 因为"画布"是整学期课表，不同周次会共用同一个时间。
  * 它们**重叠着放**：这一周真的会上的那张**最前、发亮**，其余在后面灰着（往右下缩一点露个边）。
  * 于是换周时格子里的内容就地"换牌"，位置一张都不动。
  *
  * ## 点亮：点哪门课，哪一行、哪一列一起亮
  *
- * 点卡片 → 该课所在的**列（星期几）高亮**、**行（第几节）高亮**（时间轴那一格也变色），
+ * 点卡片 → 该课所在的**列（星期几）高亮**、**行（第几个块）高亮**（时间轴那一格也变色），
  * **被点中的那一张卡**加一圈强调色描边，同时弹出那一天的课程详情 ——
  * 一眼看清"这门课落在哪一行哪一列"。
  *
@@ -832,10 +989,8 @@ private fun PeriodAxis(
     labels: GridAxisLabels,
     highlightRow: Int?,
 ) {
-    val tokens = LocalGlassTokens.current
     Column(Modifier.width(metrics.width)) {
         for (row in 0 until rowCount) {
-            val period = row + 1
             val highlighted = row == highlightRow
             Column(
                 Modifier
@@ -848,11 +1003,11 @@ private fun PeriodAxis(
                 verticalArrangement = Arrangement.Center,
             ) {
                 // ★ 时刻是**可以没有的**（那个块还没收录作息，见 Timetables.gdut）：
-                //   那就只画中间那一行「第N节」—— 宁可少一行，也不编一个时刻出来；
-                //   labels.start / labels.end 只是"这一档**允许**画时刻"，
+                //   那就只画中间那一行「N-M节」—— 宁可少一行，也不编一个时刻出来；
+                //   labels.withStartTime 只是"这一档**允许**画时刻"，
                 //   文字本身还是从数据层拿，空串照样不画
-                val startTime = CourseRepository.timetable.startOfPeriod(period)
-                val endTime = CourseRepository.timetable.endOfPeriod(period)
+                val startTime = blockStartTime(row)
+                val endTime = blockEndTime(row)
                 if (labels.withStartTime && startTime.isNotBlank()) {
                     AxisLabel(
                         text = startTime,
@@ -861,7 +1016,7 @@ private fun PeriodAxis(
                     )
                 }
                 AxisLabel(
-                    text = axisPeriodLabel(period, metrics.withPrefix),
+                    text = axisRowLabel(row, metrics.withPrefix),
                     metrics = metrics,
                     highlighted = highlighted,
                     emphasized = true,
@@ -877,6 +1032,18 @@ private fun PeriodAxis(
         }
     }
 }
+
+/** 这一行的**块起点**（= 块里第一节的开始时刻）；越界或未知返回空串 */
+private fun blockStartTime(row: Int): String = CourseRepository.blockStartTime(row)
+
+/**
+ * 这一行的**块终点**（= 块里第二节的结束时刻）；越界或未知返回空串。
+ *
+ * ★ 刻意不用 `endOfPeriod(row * PeriodsPerRow + 1)`（块里第一节的结束）：
+ * 行跨度是**整个块**，把块内的 10 分钟课间算进去才对得上卡片占的那 80 分钟
+ * （见 `ScheduleGridSlotsTest.轴上的块时刻与块内两节对得上`）。
+ */
+private fun blockEndTime(row: Int): String = CourseRepository.blockEndTime(row)
 
 /** 时间轴上的一行小字：三行同一个样式（[AxisMetrics] 里那份），亮起时整格变强调色 */
 @Composable
@@ -915,10 +1082,10 @@ private fun AxisLabel(
  * 调用方给的高度是**屏幕上真正剩下的那一条**（[BoxWithConstraints] 量出来的 `maxHeight`），
  * 行数又是"真的排过课的行数"（[gridRowCount]），所以
  *
- *  - 课表只排到下午 → 5 行 → 每行能分到 80dp 上下，卡片是**又大又方正**的一张；
- *  - 课表排到晚自习 → 8 行 → 每行 50dp 上下，照样全在一屏里；
- *  - 节次多的学校（广工 12 行）→ 每行 35dp 上下：**照样一屏看完**，
- *    骨架自己降级（时间轴减行、卡片退到最紧凑档），页头/滑块/说明条一动不动。
+ *  - 课表只排到下午 → 3 行 → 每行到 [MaxRowHeight] 封顶，卡片是**又大又方正**的一张；
+ *  - 课表排到晚自习 → 8 行 → 每行 47dp 上下，照样全在一屏里（课名两行 + 地点带都还在）；
+ *  - 块数多的学校（广工 6 块）→ 每行 55dp 上下：**照样一屏看完**；
+ *    真的压到 30dp 上下时骨架自己降级（时间轴减行、卡片退到最紧凑档）。
  *    ★ 没有"压不下就内部滚"这条退路 —— 见 [gridRowHeight] 的 KDoc。
  *
  * @param axis 时间轴度量；[AxisMetrics.width] 同时决定表头"月份格"与网格左轴的宽度
@@ -1439,15 +1606,30 @@ internal fun nameLineCount(areaHeight: Dp, lineHeight: Dp): Int {
 }
 
 /**
- * 网格里的课程卡片：课程色块 + 居中的课名 + 底部地点带（参考图的卡片就是这个结构）。
+ * 网格里的课程卡片：**填充色块 + 白字** + 居中的课名 + 底部地点带（参考图的卡片就是这个结构）。
  *
- * 时间**故意不写**：纵向位置就是时间轴上的位置，再写一遍「第3-4节」是噪音 ——
+ * 时间**故意不写**：纵向位置就是时间轴上的位置，再写一遍「3-4节」是噪音 ——
  * 要知道确切时间，点开课程详情浮层。
+ *
+ * ## 面貌只有两态，底色都是不透明的，**字色都是白**
+ *
+ * | | 底色 | 字色 | 描边 |
+ * |---|---|---|---|
+ * | 亮（这一周会上） | [courseCardFill]（课程色压深一档） | [GridCardTextOnFill] 白字 | 无 |
+ * | 灰（课表里有、这周不上 / 放假） | [courseCardDimFill] 中性偏深一档 | 同上（白字） | 深色主题下加一圈淡描边 |
+ *
+ * 三条理由，缺一不可：
+ *  - **不透明**：半透明的话压在它下面的网格线会透出来，白字的实际对比度就变成
+ *    "取决于背后画了什么"（量不准、也守不住）；
+ *  - **字色恒定**：灰卡与亮卡的底色一深一浅，字色若跟着一起插值，中间必然有一帧
+ *    两者亮度相等（对比度恒等于 1），课名会先糊掉再出现；
+ *  - **灰卡也做成深色**：这是让"字色恒定（白）"与"整条渐变都达标"同时成立的唯一办法
+ *    （来历见"卡片面貌"那一节开头的第二条取舍）。
  *
  * ## 排版按"卡片有多高"自适应（[cardHeight] → [gridCardTier]）
  *
- * 行高由整屏自适应算出来（[gridRowHeight]），所以卡片有时只有 40dp 上下（广工 12 行）、
- * 有时高到 88dp（3 行）。跟着变的有三样，顺序就是"先撤整项、再缩字号、最后省略号"：
+ * 行高由整屏自适应算出来（[gridRowHeight]），所以卡片有时只有 40dp 上下（广工 6 块）、
+ * 有时高到 88dp（3 块）。跟着变的有三样，顺序就是"先撤整项、再缩字号、最后省略号"：
  *
  *  1. **档位**（[GridCardTier]）：放不下整条地点带就**整条撤掉**（[gridCardTier]），
  *     撤掉后省下的高度全归课名 —— 这是"永不裁字"最关键的一步，
@@ -1461,7 +1643,9 @@ internal fun nameLineCount(areaHeight: Dp, lineHeight: Dp): Int {
  *
  * @param card [GridCard.dim] = true 的目标面貌是灰调（这一周不上）。**换周时不是瞬间换色**：
  *   底色 / 地点带 / 字色按 [rememberGridCardFace] 的进度一起插值，于是"亮↔灰"是淡入淡出，
- *   同一门课"这周亮、下周灰"是同一张卡片换个面貌，一眼可比
+ *   同一门课"这周亮、下周灰"是同一张卡片换个面貌，一眼可比。
+ *   ★ 两个端点都是不透明色，所以插值**路径上每一帧**也都不透明 —— 白字的对比度逐帧达标
+ *   （`GridCardContrastTest.亮灰渐变路径上每一帧的字色都读得清`）
  * @param highlighted 被**点中的那一张**（判定见 [isTappedCard]）：加一圈强调色描边（和 X/Y 轴的点亮配套）。
  *   同节次的其他日期不算 —— 那是"选中一门课，别的日子也跟着亮"那个 bug
  * @param cardHeight 这张卡的实高（`行高 × 跨几行`）：档位由它定，与"屏幕多大"无关 ——
@@ -1481,6 +1665,9 @@ private fun GridCourseCard(
     val accent = CourseRepository.colorOfName(entry.name)
     val tokens = LocalGlassTokens.current
     val density = LocalDensity.current
+    // 明暗主题：卡片底与字色都要跟着它变（见本节开头那张实测表）。
+    // 读的是**系统**明暗而不是某个自定义开关 —— 与 `ManyCourseTheme` 的默认口径一致
+    val dark = isSystemInDarkTheme()
     val interactionSource = remember { MutableInteractionSource() }
     val pressed by interactionSource.collectIsPressedAsState()
     val pressScale by animateFloatAsState(
@@ -1489,17 +1676,19 @@ private fun GridCourseCard(
         label = "gridCardPressScale",
     )
     // ★ 换周 = 就地把这张卡"换牌"（实体课 ↔ 灰卡）：走**面貌渐变**而不是瞬间换色。
-    //   0 = 灰卡的样子，1 = 这一周会上的样子；底色、地点带、字色三者一起插值，
-    //   于是"亮起来"是墨色淡入、"暗下去"是淡出 —— 换周的动效**只有这一处**
-    //   （刻意不做整块位移：整张表上下浮会看成"在抖"，而课表的位置本身就是信息）
+    //   0 = 灰卡的样子，1 = 这一周会上的样子。
+    //   ★ 插值的**只有底色**；字色每帧按"哪个更清楚"现算（见本节开头的第二条取舍）：
+    //   灰卡是浅底深字、亮卡是深底浅字，两者要求相反 —— 若让字色也一起插值，
+    //   中间必然有一帧两者亮度相等（对比度恒等于 1），课名会先糊掉再出现。
     val face = rememberGridCardFace(dim = card.dim)
-    val bodyTint = lerp(DimCardTint, accent.copy(alpha = 0.22f), face)
-    val footerTint = lerp(DimCardFooterTint, accent.copy(alpha = 0.34f), face)
-    val textColor = lerp(
-        MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.55f),
-        MaterialTheme.colorScheme.onSurface,
-        face,
-    )
+    val bodyTint = lerp(courseCardDimFill(dark), courseCardFill(accent), face)
+    val footerTint = lerp(courseCardDimFill(dark), courseCardRoomBand(accent), face)
+    // 灰卡的描边：深色主题下靠它划出卡片边界（浅色主题是 Transparent，不画）。
+    // ★ 这里必须用 `Color.Transparent`，不能写 `dimOutline.copy(alpha = 0f)`：
+    //   后者只是清掉 colorSpace，alpha 还是原来的 0.65 —— 亮卡上会一直挂着一圈灰描边
+    val dimOutline = courseCardDimOutline(dark)
+    val outlineTint = lerp(dimOutline, Color.Transparent, face)
+    val textColor = GridCardTextOnFill
     // 档位门槛按**当前字体度量**算：fontScale 一调大，同一个行高就该往下退一档。
     // 判定与绘制共用同一批 sp 常量（gridCardStyle），所以两者不会漂移
     val tier = gridCardTier(
@@ -1520,7 +1709,13 @@ private fun GridCourseCard(
             .clip(shape)
             .background(bodyTint)
             .then(
-                if (highlighted) Modifier.border(1.5.dp, tokens.accent, shape) else Modifier
+                when {
+                    // 被点中的那张：强调色描边（与 X/Y 轴的点亮配套）
+                    highlighted -> Modifier.border(1.5.dp, tokens.accent, shape)
+                    // 灰卡：同色系淡描边（不描的话就是一个灰方块，看不出"这里排过课"）
+                    outlineTint.alpha > 0.01f -> Modifier.border(1.dp, outlineTint, shape)
+                    else -> Modifier
+                }
             )
             .combinedClickable(
                 interactionSource = interactionSource,
@@ -1655,12 +1850,12 @@ private const val PressedGridCardScale = 0.97f
  *
  * | 方向 | 观感 |
  * |---|---|
- * | 灰 → 亮 | 课程的墨色**淡入**（这一周会上） |
- * | 亮 → 灰 | **淡出**到灰底（这一周不上 / 放假，但位置留着） |
+ * | 灰 → 亮 | 课程色**淡入**（这一周会上），白字跟着提亮 |
+ * | 亮 → 灰 | **淡出**到中性表面（这一周不上 / 放假，但位置留着） |
  *
  * ★ **换周的动效只有这一处，而且只改颜色**：不做整块位移或缩放 ——
- * 整张表上下浮会看成"在抖"，而课表的位置本身就是信息（第几行 = 第几节、第几列 = 星期几）。
- * 位置不动，网格线 / 时间轴 / "现在那一节"的高亮也就不用跟着对齐。
+ * 整张表上下浮会看成"在抖"，而课表的位置本身就是信息（第几行 = 第几个块、第几列 = 星期几）。
+ * 位置不动，网格线 / 时间轴 / "现在那一块"的高亮也就不用跟着对齐。
  *
  * ## 两个细节
  *
@@ -1700,12 +1895,23 @@ private fun rememberGridCardFace(dim: Boolean): Float {
 private data class AxisMetrics(val width: Dp, val style: TextStyle, val withPrefix: Boolean)
 
 /**
- * 轴上的节次文案：`第1节`（[withPrefix]）或 `1节`。
+ * 时间轴上**一行**的节次文案：`1-2节`（[withPrefix] = false，参考图的写法）
+ * 或 `第1-2节`（[withPrefix] = true，系统字号很大时的备用档）。
+ *
+ * ★ 参考图里没有「第」字：`1-2节` 比 `第1-2节` 少一个汉字，在 40dp 出头的窄轴上
+ * 一行就是"放得下"与"截成省略号"的差别（真机 font_scale 1.17 实测：
+ * `第1-2节` 要 45.5dp、超了上限；`1-2节` 只要 35dp）。所以**紧凑写法是首选**，
+ * 带「第」字的那一档只在字号很小时才轮到。
  *
  * 一个函数同时给"量宽度"和"画文字"用 —— 两处各写一遍迟早会不一致。
+ *
+ * @param row 网格行号（0 起）= 块序号；一行 = [PeriodsPerRow] 节
  */
-private fun axisPeriodLabel(period: Int, withPrefix: Boolean): String {
-    return if (withPrefix) "第${period}节" else "${period}节"
+private fun axisRowLabel(row: Int, withPrefix: Boolean): String {
+    val first = row * PeriodsPerRow + 1
+    val last = first + PeriodsPerRow - 1
+    val range = if (last > first) "$first-$last" else "$first"
+    return if (withPrefix) "第${range}节" else "${range}节"
 }
 
 /**
@@ -1713,8 +1919,8 @@ private fun axisPeriodLabel(period: Int, withPrefix: Boolean): String {
  *
  * | 候选（[AxisCandidates]） | 什么时候用 | 最宽那行文字约需 |
  * |---|---|---|
- * | 9sp + `第1-2节` | 放得下就用它（最正式） | 46dp（本机字号下 45.5dp ⇒ 用不上） |
- * | 9sp + `1-2节` | 系统字号稍大时（省掉「第」字） | 35dp（本机实测就是这一档） |
+ * | 9sp + `1-2节` | 放得下就用它（**参考图的写法**） | 35dp（本机实测就是这一档） |
+ * | 9sp + `第1-2节` | 字号小时轴宽富余（省不了就不省） | 46dp |
  * | 8sp + `1-2节` | 系统字号很大时（降一档字号） | 31dp |
  *
  * ## 为什么必须实测，而不是写死一个 52dp
@@ -1726,6 +1932,13 @@ private fun axisPeriodLabel(period: Int, withPrefix: Boolean): String {
  * `remember` 的三个 key 都是必要的：字宽随 [LocalDensity] 里的 **fontScale** 变，
  * 系统字号一改就要重量；作息表（[CourseRepository.timetable]）换学校时会换一份 ——
  * 量的是哪所学校的文字、画的就是哪所学校的文字，不然"量 A 画 B"又会把字截断。
+ *
+ * ## 行数跟着块数走（所以量的范围也要跟着块数）
+ *
+ * 广工 6 块时行标签最多只到 `11-12节`，不会有 `13-14节` ——
+ * 仍然从 1 扫到 [MaxGridRows]（而不是只扫当前 rowCount）：
+ * 同一所学校**行数会随"这学期排到第几块"变**（见 [gridRowCount]），
+ * 按当前行数去量的话，换一门晚课就会让轴宽跳一下。
  */
 @Composable
 private fun rememberAxisMetrics(): AxisMetrics {
@@ -1741,11 +1954,11 @@ private fun rememberAxisMetrics(): AxisMetrics {
          * 它既不会被画出来（见 [PeriodAxis]），量它也没有意义。
          */
         fun widest(style: TextStyle, withPrefix: Boolean): Int =
-            (1..CourseRepository.MAX_PERIOD).maxOf { period ->
+            (0 until MaxGridRows).maxOf { row ->
                 listOf(
-                    axisPeriodLabel(period, withPrefix),
-                    CourseRepository.timetable.startOfPeriod(period),
-                    CourseRepository.timetable.endOfPeriod(period),
+                    axisRowLabel(row, withPrefix),
+                    CourseRepository.blockStartTime(row),
+                    CourseRepository.blockEndTime(row),
                 ).filter { it.isNotBlank() }
                     .maxOf { measurer.measure(it, style).size.width }
             }
@@ -1767,7 +1980,7 @@ private fun rememberAxisMetrics(): AxisMetrics {
 }
 
 /**
- * 网格要画几行（一行 = 一节）。
+ * 网格要画几行（**一行 = 一个两节块**）。
  *
  * ## 只画"真的排过课的行"
  *
@@ -1775,19 +1988,19 @@ private fun rememberAxisMetrics(): AxisMetrics {
  * 8 行 × 68dp = 544dp，比屏幕上能用的高度还多，于是"看完这一周必须上下滚"
  * （真机实测：周视图 764dp vs 可用 688dp）。
  *
- * 现在行数 = **画布上最后一门课落在第几行**（画布 = 整学期课表，与"第几周"无关，
- * 所以换周时行数不变、网格高度不变），末尾那几行"整学期都没课"的空行不再占地方：
+ * 现在行数 = **画布上最后一门课落在第几块**（画布 = 整学期课表，与"第几周"无关，
+ * 所以换周时行数不变、网格高度不变），末尾那几个"整学期都没课"的块不再占地方：
  *
  * | 课表排到 | 行数 | 每行能分到 |
  * |---|---|---|
- * | 第 10 节（下午） | 10 | 约 60dp |
- * | 第 16 节（含晚自习） | 16 | 约 40dp —— 可能需要内部滚动 |
+ * | 第 10 节（下午） | 5 行 | 约 90dp（到 [MaxRowHeight] 封顶） |
+ * | 第 16 节（含晚自习） | 8 行 | 约 44dp |
  *
- * ★ 上限是**这所学校的总节数**（[MaxGridRows] = `CourseRepository.MAX_PERIOD`）：
- * 默认学校 16 节 → 16 行，广工 12 节 → 12 行 —— 广工那门"第 12 节"的课就落在最后一行，
- * 不会因为表里有 16 节而多出两行空的。整周一张卡都没有时也按它退化成"整张时刻表"。
+ * ★ 上限是**这所学校的块数**（[MaxGridRows] = `CourseRepository.BLOCK_COUNT`）：
+ * 默认学校 8 行，广工 6 行 —— 广工那门"第 11-12 节"的课就落在最后一行，
+ * 不会因为默认表有 8 块而多画两行空的。整周一张卡都没有时也按它退化成"整张时刻表"。
  *
- * 中间的空白行**照画**（第 1 节有课、第 5 节没课）：那是"这个时段空着"的信息，
+ * 中间的空白行**照画**（第 1 块有课、第 3 块没课）：那是"这个时段空着"的信息，
  * 只有**末尾**的空行才是纯浪费。行数最少 1 行、最多 [MaxGridRows]（防脏数据撑爆）。
  *
  * @param cardsOfDay 七天各自的卡片（画布 + 补的亮卡，见 [buildGridCards]）
@@ -1993,14 +2206,14 @@ internal sealed interface DaySlot {
     data class Block(val placed: List<PlacedCard>, override val rows: Int) : DaySlot
 }
 
-/** 第 [period] 节落在第几行（0 起）—— 一行 [PeriodsPerRow] 节 = 1 节 */
-internal fun blockOf(period: Int): Int = (period - 1).coerceAtLeast(0)
+/** 第 [period] 节落在第几行（0 起）—— 一行 [PeriodsPerRow] 节，所以与"第几个块"是同一个坐标 */
+internal fun blockOf(period: Int): Int = CourseRepository.blockIndexOf(period)
 
-/** 铺到第 [period] 节为止，一共要几行 */
-internal fun blocksOf(period: Int): Int = period.coerceAtLeast(0)
+/** 铺到第 [period] 节为止，一共要几行（= 覆盖到该节的块数） */
+internal fun blocksOf(period: Int): Int = blockOf(period) + 1
 
 /**
- * 被点中的那张卡片：**哪一天（列）+ 哪一行（"两节块"，0 起）**。
+ * 被点中的那张卡片：**哪一天（列）+ 哪一行（第几个"两节块"，0 起）**。
  *
  * ## 为什么是"天 + 行"两个坐标，而不是一个行号
  *
@@ -2010,12 +2223,12 @@ internal fun blocksOf(period: Int): Int = period.coerceAtLeast(0)
  *
  * ## 行号必须是**网格行号**
  *
- * 不是"这一列第几个槽位"：某一天只排 5-6 节时，那一列第一个槽位是 [DaySlot.Gap]、
+ * 不是"这一列第几个槽位"：某一天只排第 5-6 节时，那一列第一个槽位是 [DaySlot.Gap]、
  * 卡片在第 2 个槽位上，落在网格第 3 行。两者混用会让整行底色与时间轴那一格亮错行，
  * 换算见 [slotRowStarts]。
  *
  * @param day 这一列在七天里的下标（0 = 周一）
- * @param row 网格行号（0 起，一行 = 两节）
+ * @param row 网格行号（0 起，一行 = 一个两节块）
  */
 internal data class TappedCard(val day: Int, val row: Int)
 
@@ -2051,11 +2264,12 @@ internal fun slotRowStarts(slots: List<DaySlot>): List<Int> {
 }
 
 /**
- * 把一天的卡片铺到 [rowCount] 行的时间轴上（**一行 = 一节**）：顺序铺、按行定位、块内跨行。
+ * 把一天的卡片铺到 [rowCount] 行的时间轴上（**一行 = 一个两节块**）：
+ * 顺序铺、按行定位、块内跨行。
  *
  * 规则（每条都有对应的单测）：
- *  1. 卡片先换算到"行空间"：`第1节` = 第 0 行、`第2节` = 第 1 行……（[blockOf]）；
- *     连上两节（1-2）就跨两行；
+ *  1. 卡片先换算到"行空间"：第 1-2 节 = 第 0 行、第 3-4 节 = 第 1 行……（[blockOf]）；
+ *     连上四节（1-4）就跨两行；
  *  2. 从第 0 行开始；最早的行还没到，就先铺 [DaySlot.Gap]（空行）把它顶到正确的行上；
  *  3. 与当前块**行区间重叠**的卡片一律收进同一块（**叠着放**，不是并排也不是上下分），
  *     块的跨度取最长的那个。宁可叠，**不能把课藏起来**；
