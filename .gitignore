@@ -84,3 +84,11 @@ Thumbs.db
 # 入库的是它的**产物**：app/src/main/assets/indoor/（内置数据，那两份才提交）。
 # 要重新打包：adb pull ... point && pwsh tools/pack_indoor_data.ps1
 /point/
+
+# ★ README §8.4 教用户生成的是 release.p12，但原来只挡了 *.jks / *.keystore ——
+#   照文档做出来的密钥是"可被提交"的，一次 git add -A 就等于把发布能力推上 GitHub。
+#   这里把 keytool 可能产出的几种容器格式一并挡住。
+*.p12
+*.pfx
+*.bks
+*.jceks
